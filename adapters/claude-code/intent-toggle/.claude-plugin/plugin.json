@@ -1,0 +1,6 @@
+{
+  "name": "intent-toggle",
+  "version": "0.1.0",
+  "description": "意图系统召回开关：提问先拦下 → 从历史对话召回相关原文 → 回答前确认卡 → 原话自动重发（需本机 intent-lab 服务）",
+  "types": "./types/index.d.ts"
+}

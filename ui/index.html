@@ -1,0 +1,1029 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>intent-system 管理</title>
+<style>
+/* intent-lab 管理页（GET /ui）：全部接真实接口（/local/*、/reset、/health）。
+   直接双击打开文件（没有服务）时整页退回示例数据。
+   颜色取自 Orbita Design System（light：米白 + 蓝；dark：黑 + 黄）。 */
+:root {
+  color-scheme: light;
+  --bg-app: #f3f4f1; --bg-sidebar: #f7f7f3; --bg-panel: #ffffff; --bg-muted: #f8f8f5;
+  --bg-hover: color-mix(in srgb, #5f6368 12%, transparent); --bg-active: #e7eefd;
+  --text: #202124; --text-2: #5f6368; --text-3: #8b8f94;
+  --border-subtle: #e5e5df; --border: #dfdfd7; --border-strong: #d7d7cf;
+  --accent: #1d4ed8; --accent-strong: #16379c; --accent-soft: #e7eefd; --accent-fg: #ffffff;
+  --danger: #b42318; --danger-soft: #fdecea; --success: #2f7a4b; --success-soft: #e6f3ea;
+  --warning: #9a6700; --warning-soft: #fdf3dc;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  --radius: 8px; --radius-sm: 6px;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg-app: #191c1d; --bg-sidebar: #1e2223; --bg-panel: #232525; --bg-muted: #1b1f20;
+    --bg-hover: color-mix(in srgb, #a3a29b 8%, transparent); --bg-active: rgba(214,194,69,.12);
+    --text: #d6d5cf; --text-2: #a3a29b; --text-3: #7d7c76;
+    --border-subtle: #292b2b; --border: #333534; --border-strong: #3d403f;
+    --accent: #d6c245; --accent-strong: #e2d05e; --accent-soft: rgba(214,194,69,.18); --accent-fg: #1b1a15;
+    --danger: #ff7b72; --danger-soft: #3b1f1d; --success: #6cc08b; --success-soft: rgba(108,192,139,.14);
+    --warning: #e3b341; --warning-soft: rgba(227,179,65,.14);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg-app); color: var(--text); font: 14px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; color: inherit; }
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
+
+/* ---------- 左侧导航 ---------- */
+.side { background: var(--bg-sidebar); border-right: 1px solid var(--border-subtle); padding: 16px 10px; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 4px 10px 14px; font-weight: 650; }
+.brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-sm); color: var(--text-2); text-decoration: none; }
+.nav a:hover { background: var(--bg-hover); color: var(--text); }
+.nav a.on { background: var(--bg-active); color: var(--text); font-weight: 600; }
+.nav .count { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.nav svg { width: 16px; height: 16px; flex: none; }
+.side .foot { margin-top: auto; padding: 10px; font-size: 12px; color: var(--text-3); line-height: 1.6; }
+.side .foot code { font-family: var(--mono); font-size: 11.5px; }
+
+/* ---------- 主区 ---------- */
+main { padding: 28px 32px 64px; max-width: 1080px; width: 100%; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+.sub { color: var(--text-2); margin: 4px 0 0; }
+h2 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 28px 0 10px; text-transform: none; }
+.card { background: var(--bg-panel); border: 1px solid var(--border-subtle); border-radius: var(--radius); }
+.pad { padding: 16px 18px; }
+.muted { color: var(--text-2); } .faint { color: var(--text-3); } .mono { font-family: var(--mono); font-size: 12.5px; }
+.num { font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+
+/* 按钮 */
+.btn { height: 30px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: background .12s, border-color .12s; }
+.btn:hover { background: var(--bg-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.btn.primary:hover { background: var(--accent-strong); }
+.btn.ghost { border-color: transparent; color: var(--text-2); }
+.btn.danger { color: var(--danger); }
+.btn.danger.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:focus-visible, .switch:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 开关 */
+.switch { width: 34px; height: 20px; border-radius: 999px; background: var(--border-strong); border: 0; position: relative; cursor: pointer; flex: none; transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); }
+
+/* 标签 */
+.tag { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 12px; background: var(--bg-muted); color: var(--text-2); border: 1px solid var(--border-subtle); white-space: nowrap; }
+.tag.ok { background: var(--success-soft); color: var(--success); border-color: transparent; }
+.tag.warn { background: var(--warning-soft); color: var(--warning); border-color: transparent; }
+.tag.err { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.tag.acc { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+/* 概览数字 */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px; }
+.app-card { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; }
+.app-card .t { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-card .d { font-size: 12.5px; color: var(--text-2); margin-top: 4px; }
+.stat .k { font-size: 12.5px; color: var(--text-2); }
+.stat .v { font-size: 24px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stat .d { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+/* 提示条 */
+.notice { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-radius: var(--radius); background: var(--accent-soft); margin-bottom: 16px; flex-wrap: wrap; }
+.notice.warn { background: var(--warning-soft); }
+.notice .t { font-weight: 600; }
+
+/* 来源卡 */
+.sources { display: grid; gap: 12px; }
+.src-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; flex-wrap: wrap; }
+.src-ico { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; font-weight: 700; font-size: 13px; flex: none; }
+.src-name { font-weight: 600; }
+.src-body { border-top: 1px solid var(--border-subtle); padding: 12px 18px 16px; }
+.bar { height: 6px; border-radius: 999px; background: var(--bg-muted); overflow: hidden; border: 1px solid var(--border-subtle); }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+
+/* 表格 */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; font-size: 12px; color: var(--text-3); padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--bg-hover); }
+tr.excluded td:not(:last-child) { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--text-3); }
+.ellipsis { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-rows td { background: var(--bg-muted); font-size: 13px; }
+.sub-rows td:first-child { padding-left: 34px; }
+
+/* 筛选条 */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+.seg { display: inline-flex; padding: 2px; border-radius: var(--radius-sm); background: var(--bg-muted); border: 1px solid var(--border-subtle); }
+.seg button { border: 0; background: transparent; height: 26px; padding: 0 10px; border-radius: 4px; cursor: pointer; color: var(--text-2); }
+.seg button.on { background: var(--bg-panel); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 600; }
+.input { height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-panel); padding: 0 10px; min-width: 0; }
+.input.search { width: 240px; max-width: 100%; }
+
+/* 设置表单 */
+.form { display: grid; gap: 0; }
+.field { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--border-subtle); align-items: start; }
+.field:last-child { border-bottom: 0; }
+.field .l { font-weight: 550; } .field .h { font-size: 12.5px; color: var(--text-3); margin-top: 2px; }
+.field .c { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.field .c .input { flex: 1 1 220px; }
+
+/* 抽屉 */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+.scrim.on { opacity: 1; pointer-events: auto; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--bg-panel); border-left: 1px solid var(--border); box-shadow: var(--shadow); transform: translateX(100%); transition: transform .2s ease; z-index: 11; display: flex; flex-direction: column; }
+.drawer.on { transform: none; }
+.drawer .dh { padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); display: flex; gap: 12px; align-items: flex-start; }
+.drawer .db { padding: 16px 20px 32px; overflow-y: auto; display: grid; gap: 18px; align-content: start; }
+.stages { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--text-2); }
+.stages span::before { content: "✓ "; color: var(--success); }
+.stages span.skip::before { content: "· "; color: var(--text-3); }
+.stages span.err::before { content: "✕ "; color: var(--danger); }
+.entry { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-muted); border: 1px solid var(--border-subtle); display: grid; gap: 3px; }
+.entry .meta { font-size: 12px; color: var(--text-3); }
+.entry .q { font-weight: 550; }
+.entry .c { font-size: 12.5px; color: var(--text-2); }
+
+/* toast */
+.toasts { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 20; }
+.toast { background: #202124; color: #fff; padding: 9px 14px; border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 13px; animation: in .18s ease; }
+@keyframes in { from { opacity: 0; transform: translateY(6px); } }
+.empty { padding: 32px; text-align: center; color: var(--text-3); }
+
+@media (max-width: 860px) {
+  .apps { grid-template-columns: 1fr; }
+  .app { grid-template-columns: 1fr; }
+  .side { position: static; height: auto; flex-direction: row; align-items: center; overflow-x: auto; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  .brand { padding: 0 12px 0 0; }
+  .nav { display: flex; gap: 2px; } .nav a { white-space: nowrap; } .nav .count { display: none; }
+  .side .foot { display: none; }
+  main { padding: 20px 16px 48px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .field { grid-template-columns: 1fr; gap: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="dot" title="服务运行中"></span>intent-system</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot">
+      本机 <code id="foot-host">127.0.0.1:8723</code><br><span id="foot-mode"></span>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+<div class="scrim" id="scrim" data-action="close-drawer"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ================= mock 数据 ================= */
+const now = Date.now();
+const min = 60_000, hour = 60 * min, day = 24 * hour;
+
+const state = {
+  page: (['overview', 'sources', 'settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview'),
+  apps: { claude: false, codex: false },
+  prewarm: { available: false },
+  armed: null,            // 两步确认中的按钮 id
+  expanded: null,         // 来源页展开的项目
+  recallFilter: 'all', recallSearch: '',
+  verdictFilter: 'all',
+  drawer: null,
+  sources: [
+    { id: 'claude', name: 'Claude Code', ico: 'C', color: '#c96442', root: '~/.claude/projects', enabled: true, consent: 'yes',
+      sessions: 286, imported: 4171, total: 4171, lastSync: now - 2 * min, importing: null, syncing: null, error: null,
+      projects: [
+        { path: '~/Projects/demo', count: 1820, sessions: 96, last: now - 40 * min, excluded: false },
+        { path: '~/Documents/repo/orbita-intent-sys', count: 1204, sessions: 71, last: now - 11 * hour, excluded: false },
+        { path: '~/Documents/research/phd', count: 902, sessions: 58, last: now - 3 * day, excluded: false },
+        { path: '~/Documents/personal/diary', count: 0, sessions: 0, last: now - 9 * day, excluded: true, origCount: 186 },
+        { path: '（无项目目录）', count: 245, sessions: 61, last: now - 2 * day, excluded: false },
+      ] },
+    { id: 'codex', name: 'Codex', ico: 'X', color: '#3d3d3d', root: '~/.codex/sessions', enabled: false, consent: 'unasked',
+      sessions: 312, imported: 0, total: 3880, lastSync: null, importing: null, syncing: null, error: null,
+      projects: [
+        { path: '~/Projects/demo', count: 1630, sessions: 120, last: now - 25 * min, excluded: false },
+        { path: '~/Documents/repo/local-llm-gateway', count: 1410, sessions: 118, last: now - 5 * day, excluded: false },
+        { path: '~/Documents/repo/memory-bench', count: 840, sessions: 74, last: now - 24 * day, excluded: false },
+      ] },
+    { id: 'orbita', name: 'Orbita', ico: 'O', color: '#1d4ed8', root: '经 /import + /ingest 推送', enabled: true, consent: 'yes',
+      sessions: 14, imported: 62, total: 62, lastSync: now - 6 * hour, importing: null, syncing: null, error: '最近一次 /ingest 返回 HTTP 500（09:41）', push: true,
+      projects: [ { path: 'Orbita 会话', count: 62, sessions: 14, last: now - 6 * hour, excluded: false } ] },
+  ],
+  sessionsOf: {
+    'claude|~/Projects/demo': [
+      { title: 'S3 两步打分改造', count: 64, last: now - 40 * min, excluded: false },
+      { title: 'Laya 微调数据集', count: 41, last: now - 3 * day, excluded: false },
+      { title: '守门员轻量化 v3.5', count: 38, last: now - 5 * day, excluded: false },
+      { title: '临时：调试 vLLM 隧道 token', count: 12, last: now - 6 * day, excluded: true },
+      { title: 'README 重写', count: 9, last: now - 8 * day, excluded: false },
+    ],
+  },
+  recalls: [
+    { id: 'r1', at: now - 12 * min, app: 'Claude', q: '十一的行程要不要把华山换掉？', status: 'done', read: 4171, selected: 12, asked: 3, ms: 248000, verdicts: { yes: 1, no: 1, skip: 1 }, forced: false },
+    { id: 'r2', at: now - 50 * min, app: 'Claude', q: '好的', status: 'skipped', why: '寒暄 / 短确认', ms: 600 },
+    { id: 'r3', at: now - 2 * hour, app: 'Codex', q: 'local-llm-gateway 的限速要不要改成令牌桶？', status: 'done', read: 8051, selected: 7, asked: 0, ms: 61000, forced: true },
+    { id: 'r4', at: now - 5 * hour, app: 'Orbita', q: '博士论文第三章的研究问题再收窄一下', status: 'error', stage: 's3', err: 'S3 有 41 / 812 次调用失败：upstream 524', ms: 133000 },
+    { id: 'r5', at: now - 26 * hour, app: 'Claude', q: '帮我想想这个工具怎么分发给朋友', status: 'done', read: 4102, selected: 9, asked: 2, ms: 212000, verdicts: { yes: 2, no: 0, skip: 0 } },
+    { id: 'r6', at: now - 30 * hour, app: 'Claude', q: '这个 PR 的测试再补两个', status: 'cancelled', ms: 41000 },
+    { id: 'r7', at: now - 2 * day, app: 'Orbita', q: '下周组会要讲的东西排一下', status: 'done', read: 4011, selected: 5, asked: 1, ms: 190000, verdicts: { yes: 0, no: 0, skip: 1 } },
+  ],
+  verdicts: [
+    { id: 'v1', at: now - 12 * min, slot: '同一件事', statement: '你上次已经因为老人体力砍过一次华山', verdict: 'yes', from: 'Claude · 旅行计划 · 09-27', recall: 'r1' },
+    { id: 'v2', at: now - 12 * min, slot: '同一目的', statement: '你安排这趟行程的目的是带老人轻松出游', verdict: 'no', edited: '这趟主要是陪小孩', from: 'Claude · 旅行计划 · 09-27', recall: 'r1' },
+    { id: 'v3', at: now - 26 * hour, slot: '约束条件', statement: '内测用户都是信得过的朋友，可以给源码读权限', verdict: 'yes', from: 'Codex · 分发方案 · 10-04', recall: 'r5' },
+    { id: 'v4', at: now - 26 * hour, slot: '取舍标准', statement: '你更在意上手简单，而不是源码保密', verdict: 'yes', from: 'Claude · demo · 10-05', recall: 'r5' },
+    { id: 'v5', at: now - 4 * day, slot: '时序与修订', statement: '判缺重跑已经在 v3.1 取消', verdict: 'yes', from: 'Claude · 守门员 v3.1 · 09-26', recall: null },
+    { id: 'v6', at: now - 6 * day, slot: '同构机制', statement: '缓存命中问题和上次 DeepSeek 前缀缓存是同一个原因', verdict: 'no', from: 'Codex · vLLM 调优 · 09-25', recall: null },
+  ],
+  settings: {
+    mainUrl: 'https://api.moonshot.cn/v1', mainModel: 'kimi-k3', swarmUrl: 'https://xxxx.trycloudflare.com/v1', swarmModel: 'qwen38-27b-nvfp4',
+    pass: 0.7, high: 0.9, budgetMin: 30, concurrency: 128,
+    appMode: { Claude: 'manual', Codex: 'gate', Orbita: 'gate' },
+    syncEvery: 5, keepRuns: 14,
+  },
+};
+
+const DETAIL = {
+  r1: {
+    scene: '在安排十一的西安家庭行程', want: '确认要不要砍掉华山',
+    stages: [['门卫', '0.9s'], ['理解问题', '4.2s'], ['打分 4,171/4,171', '3m 12s'], ['过线 198', ''], ['写理由 198/198', '21s'], ['去重 → 147 · 合并 12', '0.2s'], ['摘句 · 选 12', '26s'], ['确认 3', ''], ['写上下文 +11', ''], ['回答', ''], ['回写 88 条边', '']],
+    summary: '我理解你要敲定十一行程里华山去不去，会用到上次因为老人体力调整节奏的决定，以及「体力优先于景点数量」这条取舍标准。',
+    selected: [
+      ['09-27 10:20 · Claude · 旅行计划 · 同一件事 0.9', '老人走不动，华山是不是要砍掉？', '同一个行程的同一处取舍'],
+      ['09-27 10:11 · Claude · 旅行计划 · 同一目的 0.9', '十一想带爸妈去西安，五天怎么排？', '同一趟家庭出游的总体安排'],
+      ['09-18 22:40 · Codex · 周末出行 · 取舍标准 0.9', '宁可少去一个点，也别让爸妈累着', '体力优先于景点数量的取舍标准'],
+      ['08-30 19:02 · Claude · 端午回顾 · 时序与修订 0.9', '上次去黄山爸妈爬到一半就下来了', '更早一次因体力改行程的经历'],
+    ],
+  },
+};
+
+/* ================= 工具 ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const n = x => Math.round(x).toLocaleString('en-US');
+const rel = t => { if (t == null) return '从未'; const s = Math.max(0, (Date.now() - t) / 1000); return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`; };
+const dur = ms => { const s = Math.max(1, Math.round(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`; };
+const clockOf = t => { const d = new Date(t); return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const src = id => state.sources.find(s => s.id === id);
+const active = s => s.active ?? s.projects.filter(p => !p.excluded).reduce((t, p) => t + p.count, 0) * (s.total ? s.imported / s.total : 0);
+const progFrac = s => s.progress ?? (s.total ? s.imported / s.total : 0);
+const progText = s => s.progressText ?? `导入 ${n(s.imported)} / ${n(s.total)} 条`;
+const totalActive = () => state.sources.filter(s => s.enabled).reduce((t, s) => t + active(s), 0);
+function toast(msg) { const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg; $('#toasts').append(el); setTimeout(() => el.remove(), 2800); }
+
+const ICONS = {
+  overview: '<path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/>',
+  sources: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  recalls: '<path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/>',
+  verdicts: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+};
+const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[k]}</svg>`;
+
+/* ================= 渲染 ================= */
+function renderNav() {
+  const pages = [
+    ['overview', '概览', ''],
+    ['sources', '来源', state.sources.filter(s => s.consent === 'unasked' || s.error).length || pwRunning(state.prewarm) ? '●' : ''],
+    ['settings', '设置', ''],
+  ];
+  $('#nav').innerHTML = pages.map(([id, label, c]) =>
+    `<a href="#${id}" class="${state.page === id ? 'on' : ''}">${icon(id)}${label}<span class="count" style="${c === '●' ? 'color:var(--accent)' : ''}">${c}</span></a>`).join('');
+}
+
+function srcStatus(s) {
+  if (s.importing) return `<span class="tag acc">${s.progressText ? esc(s.progressText) : `导入中 ${n(s.imported)}/${n(s.total)}`}</span>`;
+  if (s.syncing) return `<span class="tag acc">同步中…</span>`;
+  if (s.consent === 'unasked') return s.sessions ? `<span class="tag warn">未导入 · 发现 ${s.sessions} 个会话</span>` : '<span class="tag">未发现对话</span>';
+  if (s.consent === 'no') return `<span class="tag">你选择了不导入</span>`;
+  if (s.imported === 0) return `<span class="tag">未导入</span>`;
+  if (s.error) return `<span class="tag err">有错误</span>`;
+  if (!s.enabled) return `<span class="tag">已暂停</span>`;
+  return `<span class="tag ok">正常</span>`;
+}
+
+
+/** 三步引导（10-12）：激活 → 导入并开始预热 → 预热完成。顺序无关：没激活也能先导入（概览提示激活后自动预热，
+ *  预热按钮只在激活后出现）；预热的手动入口只有来源页的预热卡一个；这张卡走完自动消失。 */
+function guideCard() {
+  const c = state.config || {};
+  const granted = c.hosted && c.hosted.granted;
+  const un = state.sources.filter(s => s.consent !== 'no' && s.total > 0 && !s.imported);
+  const importing = state.sources.find(s => s.importing);
+  const pw = state.prewarm;
+  const warmEnough = !pw || !pw.available || pwPct(pw) >= 0.9999;
+  if (!granted) return ''; // 未激活时整个概览被向导页替换，不会走到这（兜底）
+  if (un.length) {
+    const total = un.reduce((t, s) => t + s.total, 0);
+    const rate = pw && pw.ratePerSec ? pw.ratePerSec : 6;
+    const secs = total / rate;
+    const est = secs >= 90 ? `约 ${Math.ceil(secs / 60)} 分钟` : `约 ${Math.max(1, Math.ceil(secs))} 秒`;
+    return `
+  <div class="card pad" style="margin-bottom:14px;border-color:var(--accent)">
+    <div class="row" style="gap:8px"><span class="faint">① 激活 · 已完成</span><span class="src-name">② 导入并开始预热</span></div>
+    <p class="sub" style="margin:8px 0 6px">把下面的历史对话导入本机（只存这台电脑），导入后服务器会自动做一次缓存预热：</p>
+    ${un.map(s => `<div class="row" style="gap:8px;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.color}"></span><b>${s.name}</b>：找到 <b>${n(s.total)}</b> 条 · ${n(s.sessions)} 个会话</div>`).join('')}
+    <p class="sub">首次预热预计<b>${est}</b>（约 ${n(total)} 条，按每秒 ${rate >= 10 ? Math.round(rate) : rate.toFixed(1)} 条）。可以先按项目排除不想要的部分再导入。</p>
+    <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+      ${importing
+        ? `<span class="tag acc">正在导入${importing.progressText ? `：${importing.progressText}` : ''}…</span>`
+        : `<button class="btn primary" data-action="next-import-all">导入并开始预热</button>
+           <a class="btn ghost" href="#sources">先按项目排除</a>`}
+    </div>
+  </div>`;
+  }
+  if (state.config && state.config.engine === 'deepseek-own') {
+    return `
+  <div class="card pad" style="margin-bottom:14px">
+    <div class="row" style="gap:8px"><span class="faint">① 激活 · 已完成　② 导入 · 已完成</span><span class="src-name">③ 就绪</span></div>
+    <p class="sub" style="margin:8px 0 6px">自己配置（DeepSeek）模式不需要缓存预热——导入完成即可在 Claude Code 里提问。</p>
+  </div>`;
+  }
+  if (!warmEnough) {
+    const pct = Math.round(pwPct(pw) * 100);
+    return `
+  <div class="card pad" style="margin-bottom:14px">
+    <div class="row" style="gap:8px"><span class="faint">① 激活 · 已完成　② 导入 · 已完成</span><span class="src-name">③ 缓存预热 ${pct}%</span></div>
+    <p class="sub" style="margin:8px 0 6px">${pwRunning(pw) ? `预热进行中${pw.etaMs != null ? `，还要${etaText(pw.etaMs)}` : ''}；做完之前召回会很慢。` : '预热停了：去「来源」页继续。'}</p>
+    <div class="bar" style="margin-bottom:8px"><i style="width:${pct}%"></i></div>
+    <a class="btn" href="#sources">在「来源」查看</a>
+  </div>`;
+  }
+  return '';
+}
+
+/** 引导第②步是否还在（概览有「导入并开始预热」卡）——期间来源页不给各自的导入按钮，单一主入口 */
+function guideActive() {
+  const c = state.config || {};
+  if (!(c.hosted && c.hosted.granted)) return false;
+  return state.sources.some(s => s.consent !== 'no' && s.total > 0 && !s.imported);
+}
+
+function pageOverview() {
+  const done = state.recalls.filter(r => r.status === 'done');
+  const pending = state.sources.find(s => s.consent === 'unasked');
+  const errored = state.sources.find(s => s.error);
+  const guide = guideCard();
+  return `
+  <div class="head"><div><h1>概览</h1><p class="sub">这台电脑上的意图系统：数据只在本机，不经过任何第三方。</p></div></div>
+  ${guide}
+  ${!guide && pending ? `<div class="notice"><span class="t">发现 ${esc(pending.name)} 记录</span><span class="muted">${pending.sessions} 个会话 / ${n(pending.total)} 条，导入后会一起用于召回。</span><span class="spacer"></span>
+    <button class="btn primary" data-action="import" data-id="${pending.id}">导入</button><button class="btn ghost" data-action="decline" data-id="${pending.id}">不要</button></div>` : ''}
+  ${!guide && (pwRunning(state.prewarm) || (state.prewarm.available && pwPct(state.prewarm) < 1 && state.sources.some(x => x.imported > 0))) ? `<div class="notice ${pwRunning(state.prewarm) ? '' : 'warn'}"><span class="t">缓存预热 ${Math.round(pwPct(state.prewarm) * 100)}%</span><span class="muted">${pwRunning(state.prewarm) ? `进行中${state.prewarm.etaMs != null ? `，还要${etaText(state.prewarm.etaMs)}` : ''}；做完之前召回会很慢` : '还没做完：召回会很慢，建议先开始预热'}</span><span class="spacer"></span><a class="btn" href="#sources">${pwRunning(state.prewarm) ? '查看' : '去预热'}</a></div>` : ''}
+  ${errored ? `<div class="notice warn"><span class="t">${esc(errored.name)}</span><span class="muted">${esc(errored.error)}</span><span class="spacer"></span><button class="btn" data-action="retry" data-id="${errored.id}">重试</button></div>` : ''}
+  <h2 style="margin-top:4px">在哪里使用意图系统</h2>
+  <div class="apps">
+    <section class="card app-card">
+      <span class="src-ico" style="background:#c964421a;color:#c96442">C</span>
+      <div style="flex:1;min-width:0">
+        <div class="t">Claude Code ${state.apps.claude ? '<span class="tag ok">开</span>' : '<span class="tag">关</span>'}</div>
+        <div class="d">开：新对话一开局就打开意图系统（每句先过门卫），第一句就生效。单个对话里仍可用输入框上方的按钮或 <span class="mono">/intent on|off</span> 临时切换。</div>
+      </div>
+      <button class="switch" role="switch" aria-label="Claude Code 使用意图系统" aria-checked="${state.apps.claude}" data-action="app-switch" data-app="claude"></button>
+    </section>
+    <section class="card app-card">
+      <span class="src-ico" style="background:#3d3d3d1a;color:#3d3d3d">X</span>
+      <div style="flex:1;min-width:0">
+        <div class="t">Codex ${state.apps.codex ? '<span class="tag ok">开</span>' : '<span class="tag">关</span>'}<span class="tag warn">待接入</span></div>
+        <div class="d">Codex 侧的接入（MCP）还没做：开关先记下，接入后生效。Codex 的对话现在已经可以作为历史被召回，见「来源」。</div>
+      </div>
+      <button class="switch" role="switch" aria-label="Codex 使用意图系统" aria-checked="${state.apps.codex}" data-action="app-switch" data-app="codex"></button>
+    </section>
+  </div>
+  <h2>概况</h2>
+  <div class="stats">
+    <div class="card pad stat"><div class="k">参与召回</div><div class="v">${n(totalActive())}</div><div class="d">条 QA · ${state.sources.filter(s => s.enabled && s.imported).length} 个来源</div></div>
+    <div class="card pad stat"><div class="k">近 7 天召回</div><div class="v">${state.recalls.filter(r => r.at > Date.now() - 7 * day).length}</div><div class="d">完成 ${done.length} · 跳过 ${state.recalls.filter(r => r.status === 'skipped').length} · 失败 ${state.recalls.filter(r => r.status === 'error').length}</div></div>
+    <div class="card pad stat"><div class="k">平均用时</div><div class="v">${dur(done.reduce((t, r) => t + r.ms, 0) / Math.max(1, done.length))}</div><div class="d">由我们的服务器处理</div></div>
+  </div>
+  <h2>来源</h2>
+  <div class="card"><div class="tbl-wrap"><table>
+    <thead><tr><th>来源</th><th>状态</th><th class="num">参与召回</th><th>上次同步</th><th></th></tr></thead>
+    <tbody>${state.sources.map(s => `<tr class="click" data-action="goto" data-page="sources">
+      <td><div class="row"><span class="src-ico" style="background:${s.color}1a;color:${s.color};width:24px;height:24px;font-size:11px">${s.ico}</span>${esc(s.name)}</div></td>
+      <td>${srcStatus(s)}</td><td class="num">${s.imported ? n(active(s)) : '—'}</td><td class="muted">${s.push ? '推送 · ' : ''}${rel(s.lastSync)}</td>
+      <td style="text-align:right"><span class="faint">管理 ›</span></td></tr>`).join('')}</tbody>
+  </table></div></div>
+  <h2>最近召回</h2>
+  <div class="card">${state.recalls.length ? `<div class="tbl-wrap"><table><tbody>${state.recalls.slice(0, 4).map(recallRow).join('')}</tbody></table></div>` : '<div class="empty">还没有召回记录：在 Claude 里打开意图系统开关，问一句试试</div>'}</div>`;
+}
+
+const pwRunning = pw => pw && pw.available && ['queued', 'running', 'paused'].includes(pw.phase);
+const pwPct = pw => (pw && pw.coverage && pw.coverage.segs ? pw.coverage.warmed / pw.coverage.segs : 1);
+const etaText = ms => (ms == null ? '' : ms < 90_000 ? '不到 2 分钟' : ms < 3_600_000 ? `约 ${Math.round(ms / 60000)} 分钟` : `约 ${(ms / 3_600_000).toFixed(1)} 小时`);
+
+/** 缓存预热卡（来源页顶部）：同步完自动开始，不留到对话里 */
+function prewarmCard() {
+  const pw = state.prewarm;
+  if (!pw || !pw.available) return '';
+  const run = pwRunning(pw);
+  const noData = !pw.coverage || !pw.coverage.segs; // 还没导入任何历史：没有段可热，别显示 100%
+  const pct = noData ? 0 : Math.round(pwPct(pw) * 100);
+  const frac = run && pw.total ? pw.done / pw.total : noData ? 0 : pwPct(pw);
+  const status = noData && !run ? '<span class="tag">等待导入</span>'
+    : pw.phase === 'queued' ? '<span class="tag acc">排队中</span>'
+    : pw.phase === 'running' ? '<span class="tag acc">预热中</span>'
+    : pw.phase === 'paused' ? '<span class="tag warn">暂停：有召回在跑，先让给你</span>'
+    : pw.phase === 'error' ? '<span class="tag err">出错</span>'
+    : pw.phase === 'stopped' ? '<span class="tag">已停</span>'
+    : pct >= 100 ? '<span class="tag ok">已完成</span>' : '<span class="tag warn">没做完</span>';
+  return `<section class="card" style="margin-bottom:12px">
+    <div class="src-head">
+      <span class="src-ico" style="background:var(--accent-soft);color:var(--accent)">⚡</span>
+      <div style="min-width:0;flex:1"><div class="row" style="gap:8px"><span class="src-name">缓存预热</span>${status}</div>
+        <div class="faint" style="margin-top:2px;font-size:12.5px">把历史对话预先算进服务器缓存，召回才能命中缓存、速度正常。预计时间在导入前给过；同步完就在这里做，不留到提问时。</div></div>
+      ${run ? '<button class="btn" data-action="prewarm-stop">停止</button>'
+        : (state.config && state.config.hostedOnly && !(state.config.hosted && state.config.hosted.granted)) ? ''
+        : pct < 100 && !noData ? `<button class="btn primary" data-action="prewarm-start">${pw.phase === 'stopped' || pw.phase === 'error' ? '继续预热' : '开始预热'}</button>` : ''}
+    </div>
+    <div class="src-body">
+      <div style="display:grid;gap:6px">
+        <div class="row"><span>${noData && !run ? '还没有可预热的历史（先在「概览」导入）' : run && pw.total ? `第 ${n(pw.done)} / ${n(pw.total)} 条` : `已预热 ${n(pw.coverage.warmed)} / ${n(pw.coverage.segs)} 段`}</span>
+          <span class="spacer"></span><span class="faint">${noData && !run ? '' : run ? `覆盖 ${pct}%${pw.etaMs != null ? ` · 还要${etaText(pw.etaMs)}` : ''}` : `${pct}%`}</span></div>
+        <div class="bar"><i style="width:${Math.round(frac * 100)}%"></i></div>
+        ${pw.phase === 'error' ? `<div style="color:var(--danger);font-size:12.5px">${esc(pw.error || '')}</div>` : ''}
+        ${pw.failed ? `<div class="faint" style="font-size:12.5px">${n(pw.failed)} 条失败（下次预热会再试）</div>` : ''}
+      </div>
+    </div>
+  </section>`;
+}
+
+function pageSources() {
+  return `
+  <div class="head"><div><h1>来源</h1><p class="sub">意图系统从哪些应用读历史对话。排除的项目或会话不参与召回，但数据仍保留，随时可以恢复。</p></div>
+    <button class="btn" data-action="sync-all">全部立即同步</button></div>
+  ${prewarmCard()}
+  <div class="sources">${state.sources.map(s => {
+    const has = s.imported > 0 && !s.importing;
+    const armedClear = state.armed === `clear:${s.id}`;
+    return `<section class="card">
+      <div class="src-head">
+        <span class="src-ico" style="background:${s.color}1a;color:${s.color}">${s.ico}</span>
+        <div style="min-width:0"><div class="row" style="gap:8px"><span class="src-name">${esc(s.name)}</span>${srcStatus(s)}</div>
+          <div class="faint mono" style="margin-top:2px">${esc(s.root)}</div></div>
+        <span class="spacer"></span>
+        ${has ? `<span class="muted num" style="font-size:13px">${n(active(s))} 条 · ${s.push ? '推送' : '同步'} ${rel(s.lastSync)}</span>
+          <label class="row" style="gap:8px;font-size:13px">参与召回<button class="switch" role="switch" aria-checked="${s.enabled}" data-action="toggle-src" data-id="${s.id}"></button></label>` : ''}
+      </div>
+      <div class="src-body">
+        ${s.error ? `<div class="notice warn" style="margin-bottom:12px"><span>${esc(s.error)}</span><span class="spacer"></span><button class="btn sm" data-action="retry" data-id="${s.id}">重试</button></div>` : ''}
+        ${s.importing ? `<div style="display:grid;gap:6px;margin-bottom:12px"><div class="row"><span>${esc(progText(s))}</span><span class="spacer"></span><span class="faint">${Math.round(progFrac(s) * 100)}%</span></div><div class="bar"><i style="width:${progFrac(s) * 100}%"></i></div></div>` : ''}
+        <div class="row" style="margin-bottom:12px">
+          ${!has && !s.importing ? (s.consent === 'unasked' && !s.total
+              ? '<span class="faint">未发现对话（用了这个应用后会出现在这里）</span>'
+              : (state.config && state.config.hostedOnly && !(state.config.hosted && state.config.hosted.granted))
+                ? '<span class="faint">先在第 ① 步激活（概览）</span>'
+                : guideActive()
+                  ? '<span class="faint">用上方（概览）的「导入并开始预热」</span>'
+                  : `<button class="btn primary" data-action="import" data-id="${s.id}">${s.consent === 'unasked' ? `导入 ${s.sessions} 个会话` : '现在导入'}</button>${s.consent === 'unasked' ? `<button class="btn ghost" data-action="decline" data-id="${s.id}">不要</button>` : ''}`) : ''}
+          ${s.importing ? `<button class="btn" data-action="cancel-import" data-id="${s.id}">取消导入</button>` : ''}
+          ${has && !s.push ? `<button class="btn" data-action="sync" data-id="${s.id}" ${s.syncing ? 'disabled' : ''}>${s.syncing ? '同步中…' : '立即同步'}</button><button class="btn" data-action="import" data-id="${s.id}">重新导入</button>` : ''}
+          ${has ? `<button class="btn danger ${armedClear ? 'armed' : ''}" data-action="clear" data-id="${s.id}">${armedClear ? `确认清空 ${n(s.imported)} 条？` : '清空'}</button>${armedClear ? '<button class="btn ghost" data-action="disarm">算了</button>' : ''}` : ''}
+          <span class="spacer"></span>
+          ${!s.push && has ? `<span class="faint" style="font-size:12.5px">召回前自动增量同步 · 后台每 ${state.settings.syncEvery} 分钟</span>` : ''}
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>项目 / 目录</th><th class="num">会话</th><th class="num">条数</th><th>最近活动</th><th></th></tr></thead>
+          <tbody>${s.projects.map(p => {
+            const key = `${s.id}|${p.path}`, sess = state.sessionsOf[key] ?? (LIVE.on && !s.push ? 'lazy' : undefined), open = state.expanded === key;
+            return `<tr class="${p.excluded ? 'excluded' : ''} ${sess ? 'click' : ''}" ${sess ? `data-action="expand" data-key="${esc(key)}"` : ''}>
+              <td class="mono"><span class="faint" style="display:inline-block;width:14px">${sess ? (open ? '▾' : '▸') : ''}</span>${esc(p.path)}</td>
+              <td class="num muted">${p.sessions || '—'}</td><td class="num">${n(p.excluded ? (p.origCount ?? p.count) : p.count)}${p.stored != null && p.stored < p.count ? `<div class="faint" style="font-size:11.5px">已入库 ${n(p.stored)}</div>` : ''}</td><td class="muted">${rel(p.last)}</td>
+              <td style="text-align:right"><button class="btn sm ${p.excluded ? '' : 'ghost'}" data-action="exclude" data-src="${s.id}" data-path="${esc(p.path)}">${p.excluded ? '恢复' : '排除'}</button></td></tr>
+              ${open && sess === 'lazy' ? '<tr class="sub-rows"><td colspan="5" class="faint">加载中…</td></tr>' : ''}${open && Array.isArray(sess) ? sess.map((x, i) => `<tr class="sub-rows ${x.excluded ? 'excluded' : ''}"><td>${esc(x.title)}</td><td></td><td class="num">${x.count}${x.stored != null && x.stored < x.count ? ` <span class="faint">(${x.stored})</span>` : ''}</td><td class="muted">${rel(x.last)}</td>
+                <td style="text-align:right"><button class="btn sm ${x.excluded ? '' : 'ghost'}" data-action="exclude-session" data-key="${esc(key)}" data-i="${i}">${x.excluded ? '恢复' : '排除'}</button></td></tr>`).join('') : ''}`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function statusTag(r) {
+  return { done: '<span class="tag ok">完成</span>', skipped: '<span class="tag">门卫跳过</span>', cancelled: '<span class="tag">已取消</span>', error: '<span class="tag err">失败</span>' }[r.status];
+}
+function recallLine(r) {
+  if (r.status === 'done') return `读了 ${n(r.read)} 条，选中 ${r.selected} 条，问了你 ${r.asked} 条`;
+  if (r.status === 'skipped') return `门卫：${r.why}`;
+  if (r.status === 'error') return `停在 ${r.stage.toUpperCase()} · ${r.err}`;
+  return '本轮未回答';
+}
+function recallRow(r) {
+  return `<tr class="click" data-action="open-recall" data-id="${r.id}">
+    <td class="muted num" style="white-space:nowrap">${clockOf(r.at)}</td>
+    <td><span class="tag">${r.app}</span></td>
+    <td><div class="ellipsis" style="font-weight:550">${esc(r.q)}</div><div class="faint ellipsis" style="font-size:12.5px">${esc(recallLine(r))}</div></td>
+    <td>${statusTag(r)}${r.forced ? ' <span class="tag acc">强制</span>' : ''}</td>
+    <td class="num muted" style="white-space:nowrap;text-align:right">${dur(r.ms)}</td></tr>`;
+}
+
+function pageSettings() {
+  if (LIVE.on) return pageSettingsLive();
+  const s = state.settings;
+  const modes = [['manual', '每问手动开'], ['gate', '门卫自动判断'], ['off', '关']];
+  return `
+  <div class="head"><div><h1>设置</h1><p class="sub">写入本机 <span class="mono">${(state.config && state.config.path) || "配置文件"}</span>。API key 只存本机，这里不回显。</p></div>
+    <button class="btn primary" data-action="save">保存</button></div>
+  <h2>各应用里的默认行为</h2>
+  <div class="card form">${Object.keys(s.appMode).map(app => `
+    <div class="field"><div><div class="l">${app}</div><div class="h">${app === 'Claude' ? '输入框上方的开关仍可逐问覆盖' : app === 'Codex' ? '靠 AGENTS.md 规则与 MCP，模型配合' : 'Orbita 内置开关'}</div></div>
+      <div class="c"><div class="seg">${modes.map(([k, l]) => `<button class="${s.appMode[app] === k ? 'on' : ''}" data-action="app-mode" data-app="${app}" data-v="${k}">${l}</button>`).join('')}</div></div></div>`).join('')}
+  </div>
+  <h2>模型端点</h2>
+  <div class="card form">
+    <div class="field"><div><div class="l">主模型</div><div class="h">S1 意图识别 + S4 守门员</div></div><div class="c"><input class="input mono" value="${esc(s.mainUrl)}"><input class="input mono" value="${esc(s.mainModel)}" style="flex:0 1 160px"><span class="tag ok">key 已配置</span></div></div>
+    <div class="field"><div><div class="l">蜂群</div><div class="h">S3 逐条面试；门卫默认也走它</div></div><div class="c"><input class="input mono" value="${esc(s.swarmUrl)}"><input class="input mono" value="${esc(s.swarmModel)}" style="flex:0 1 160px"><button class="btn sm" data-action="test-endpoint">测试连接</button></div></div>
+  </div>
+  <h2>召回参数</h2>
+  <div class="card form">
+    <div class="field"><div><div class="l">过线 / 入选阈值</div><div class="h">≥ 入选 直接进上下文；[过线, 入选) 拿不准，确认卡从这里挑</div></div><div class="c"><input class="input num" type="number" step="0.05" min="0" max="1" value="${s.pass}" style="flex:0 0 90px"><span class="faint">/</span><input class="input num" type="number" step="0.05" min="0" max="1" value="${s.high}" style="flex:0 0 90px"></div></div>
+    <div class="field"><div><div class="l">单次召回时长上限</div><div class="h">到点停止，本轮不回答</div></div><div class="c"><input class="input num" type="number" value="${s.budgetMin}" style="flex:0 0 90px"><span class="muted">分钟</span></div></div>
+    <div class="field"><div><div class="l">S3 并发</div><div class="h">本地 27B 实测 128</div></div><div class="c"><input class="input num" type="number" value="${s.concurrency}" style="flex:0 0 90px"></div></div>
+  </div>
+  <h2>数据与隐私</h2>
+  <div class="card form">
+    <div class="field"><div><div class="l">后台同步间隔</div><div class="h">Claude / Codex 本地记录的增量扫描</div></div><div class="c"><input class="input num" type="number" value="${s.syncEvery}" style="flex:0 0 90px"><span class="muted">分钟</span></div></div>
+    <div class="field"><div><div class="l">诊断记录保留</div><div class="h">data/runs 里每次召回的事件流</div></div><div class="c"><input class="input num" type="number" value="${s.keepRuns}" style="flex:0 0 90px"><span class="muted">天</span></div></div>
+    <div class="field"><div><div class="l">本机访问令牌</div><div class="h">插件与本页靠它访问 intent-lab，挡住其他网页</div></div><div class="c"><span class="mono faint">••••••••••••3f9a</span><button class="btn sm" data-action="rotate">重新生成</button></div></div>
+    <div class="field"><div><div class="l">清空全部数据</div><div class="h">所有来源的 QA、意图记录、表态、上下文文件；配置保留</div></div><div class="c">
+      <button class="btn danger ${state.armed === 'wipe' ? 'armed' : ''}" data-action="wipe">${state.armed === 'wipe' ? '再点一次：清空全部' : '清空全部数据'}</button>${state.armed === 'wipe' ? '<button class="btn ghost" data-action="disarm">算了</button>' : ''}</div></div>
+  </div>`;
+}
+
+function pageSettingsLive() {
+  const c = state.config;
+  if (!c) return '<div class="head"><div><h1>设置</h1></div></div><div class="card"><div class="empty">读取配置…</div></div>';
+  const mode = state.endpointMode || c.mode;
+  const ep = (k, label, hint) => {
+    const e = c[k] || { baseUrl: '', model: '', hasKey: false };
+    return `<div class="field"><div><div class="l">${label}</div><div class="h">${hint}</div></div><div class="c">
+      <input class="input mono" id="cfg-${k}-url" placeholder="https://…/v1" value="${esc(e.baseUrl)}">
+      <input class="input mono" id="cfg-${k}-model" placeholder="模型名" value="${esc(e.model)}" style="flex:0 1 180px">
+      <input class="input mono" id="cfg-${k}-key" type="password" autocomplete="off" placeholder="${e.hasKey ? 'API key 已配置 · 留空不改' : '填 API key'}" style="flex:0 1 220px">
+      ${e.hasKey ? '<span class="tag ok">key 已配置</span>' : '<span class="tag warn">缺 key</span>'}</div></div>`;
+  };
+  const h = c.hosted;
+  const armedRevoke = state.armed === 'hosted-revoke';
+  const hosted = h.granted ? `
+    <div class="field"><div><div class="l">授权</div><div class="h">${h.source === 'env' ? '来自环境变量 INTENT_LAB_HOSTED_URL / KEY' : '用邀请码激活的，这台电脑专属'}</div></div><div class="c">
+      <span class="tag ok">✓ 已授权</span>${h.user ? `<span class="muted">${esc(h.user)}</span>` : ''}
+      ${h.source === 'env' ? '' : `<button class="btn sm danger ${armedRevoke ? 'armed' : ''}" data-action="hosted-revoke">${armedRevoke ? '再点一次：解除授权' : '解除授权'}</button>${armedRevoke ? '<button class="btn sm ghost" data-action="disarm">算了</button>' : ''}`}</div></div>
+    <div class="field"><div><div class="l">用哪种模型</div><div class="h">官方 27B 免费；或 DeepSeek 官方 + 你自己的 key（费用由你的 DeepSeek 账户承担）</div></div><div class="c">
+      <div class="seg">
+        <button class="${(c.engine || 'hosted-27b') === 'hosted-27b' && !(state.wantOwnKey && !c.userKey?.set) ? 'on' : ''}" data-action="engine-mode" data-v="hosted-27b">用我们的服务器（27B，免费）</button>
+        <button class="${c.engine === 'deepseek-own' || (state.wantOwnKey && !c.userKey?.set) ? 'on' : ''}" data-action="engine-mode" data-v="deepseek-own">自己配置：DeepSeek 官方</button>
+      </div></div></div>
+    ${c.engine === 'deepseek-own' || c.userKey?.set || state.wantOwnKey ? `
+    <div class="field"><div><div class="l">DeepSeek API key</div><div class="h">${c.userKey?.set
+      ? `已设置 · 末 4 位 <span class="mono">${esc(c.userKey.last4 || '…')}</span>，存在我们的服务器上（加密），只用于你的召回，可随时删除`
+      : '只填一次 key：加密存在我们的服务器上（不落日志），召回时由服务器代为调用 DeepSeek 官方'}</div></div><div class="c" style="display:grid;gap:6px;justify-items:start">
+      ${c.userKey?.set
+        ? `<button class="btn sm danger" data-action="user-key-delete">删除（回到 27B 免费档）</button>`
+        : `<div class="row" style="gap:8px"><input id="ds-key" type="password" placeholder="sk-…（DeepSeek 后台 API Keys 里复制）" style="width:280px" /><button class="btn sm primary" data-action="user-key-save">保存</button></div>
+           <span class="faint">保存前会用这个 key 调一次 DeepSeek 验证有效性。低谷一次全量召回约几元、高峰约翻倍（以 DeepSeek 后台为准）；不需要预热。</span>`}
+    </div></div>` : ''}` : `
+    <div class="field"><div><div class="l">邀请码</div><div class="h">内测用户找我们要；激活后这台电脑就能用我们的服务器</div></div><div class="c">
+      <input class="input mono" id="cfg-invite" placeholder="IL-XXXX-XXXX" autocomplete="off" style="flex:0 1 220px;text-transform:uppercase">
+      <button class="btn primary" data-action="hosted-activate">激活</button>
+      ${h.authConfigured === false ? '<span class="tag warn">激活服务地址未配置（INTENT_LAB_HOSTED_AUTH）</span>' : ''}</div></div>`;
+  return `
+  <div class="head"><div><h1>设置</h1><p class="sub">${c.hostedOnly ? '各项改动立即生效。' : `写入本机 <span class="mono">${esc(c.path)}</span>（权限 600）。密钥只存本机，这里不回显；新的召回立即用新配置。`}</p></div>
+    ${c.hostedOnly ? '' : '<div class="row"><button class="btn" data-action="test-endpoint">检查连接</button><button class="btn primary" data-action="save">保存</button></div>'}</div>
+  <h2>模型端点</h2>
+  <div class="card form">
+    ${c.hostedOnly ? '' : `<div class="field"><div><div class="l">用哪里的模型</div><div class="h">${mode === 'hosted' ? '不用自己买 API：召回跑在我们的服务器上' : '用你自己的 OpenAI 兼容端点（自费）'}</div></div>
+      <div class="c"><div class="seg">
+        <button class="${mode === 'hosted' ? 'on' : ''}" data-action="endpoint-mode" data-v="hosted">用我们的服务器${h.granted ? '' : '（未授权）'}</button>
+        ${c.hostedOnly ? '' : `<button class="${mode === 'own' ? 'on' : ''}" data-action="endpoint-mode" data-v="own">自己配置</button>`}
+      </div>${mode !== c.mode ? (mode === 'hosted' && !h.granted ? '<span class="faint">输入邀请码激活后即生效</span>' : '<span class="tag warn">切换后点「保存」生效</span>') : ''}</div></div>`}
+    ${mode === 'hosted' || c.hostedOnly ? hosted : ep('main', '主模型', 'S1 意图识别 + S4 守门员（长上下文更好）') + ep('swarm', '蜂群', 'S3 逐条面试；门卫默认也走它（便宜、快）')}
+  </div>
+  ${(mode === 'hosted' || c.hostedOnly) ? '' : `<h2>召回参数</h2>
+  <div class="card form">
+    <div class="field"><div><div class="l">单次召回时长上限</div><div class="h">到点停止，本轮不回答</div></div><div class="c"><input class="input num" id="cfg-budget" type="number" min="1" value="${Math.round(c.recallBudgetMs / 60000)}" style="flex:0 0 90px"><span class="muted">分钟</span></div></div>
+    <div class="field"><div><div class="l">S3 并发</div><div class="h">同时面试多少条；DeepSeek 50 左右</div></div><div class="c"><input class="input num" id="cfg-conc" type="number" min="1" value="${c.recallConcurrency}" style="flex:0 0 90px"></div></div>
+    <div class="field"><div><div class="l">过线 / 入选阈值</div><div class="h">由环境变量 INTENT_LAB_S3_PASS / INTENT_LAB_S3_HIGH 控制（缺省 0.7 / 0.9）</div></div><div class="c"><span class="faint">改环境变量后重启服务</span></div></div>
+  </div>`}
+  <h2>数据</h2>
+  <div class="card form">
+    <div class="field"><div><div class="l">后台同步</div><div class="h">已同意的本机来源每 5 分钟增量扫描一次；每次召回前也会先同步</div></div><div class="c">${c.hostedOnly ? '' : '<span class="faint">INTENT_LAB_LOCAL_SYNC_MS 可改</span>'}</div></div>
+    <div class="field"><div><div class="l">清空全部数据</div><div class="h">所有来源的 QA、意图记录、表态、上下文文件；配置与召回诊断记录保留</div></div><div class="c">
+      <button class="btn danger ${state.armed === 'wipe' ? 'armed' : ''}" data-action="wipe">${state.armed === 'wipe' ? '再点一次：清空全部' : '清空全部数据'}</button>${state.armed === 'wipe' ? '<button class="btn ghost" data-action="disarm">算了</button>' : ''}</div></div>
+  </div>`;
+}
+
+function renderDrawer() {
+  const r = state.recalls.find(x => x.id === state.drawer);
+  const el = $('#drawer');
+  $('#scrim').classList.toggle('on', !!r);
+  el.classList.toggle('on', !!r);
+  el.setAttribute('aria-hidden', String(!r));
+  if (!r) return;
+  const d = DETAIL[r.id];
+  el.innerHTML = `
+    <div class="dh"><div style="min-width:0;flex:1"><div class="row" style="gap:6px;margin-bottom:6px"><span class="tag">${r.app}</span>${statusTag(r)}<span class="faint" style="font-size:12.5px">${clockOf(r.at)} · ${dur(r.ms)}</span></div>
+      <div style="font-weight:600;font-size:15px">${esc(r.q)}</div></div>
+      <button class="btn ghost sm" data-action="close-drawer" aria-label="关闭">✕</button></div>
+    <div class="db">
+      <div class="muted">${esc(recallLine(r))}${r.verdicts ? ` · 对 ${r.verdicts.yes} / 不对 ${r.verdicts.no} / 不表态 ${r.verdicts.skip}` : ''}</div>
+      ${d ? `
+      <div><h2 style="margin:0 0 8px">阶段</h2><div class="stages">${d.stages.map(([l, t]) => `<span>${l}${t ? ` <span class="faint mono">${t}</span>` : ''}</span>`).join('')}</div></div>
+      <div><h2 style="margin:0 0 8px">理解</h2><div class="muted">场景：${esc(d.scene)} · 诉求：${esc(d.want)}</div><p style="margin:8px 0 0">${esc(d.summary)}</p></div>
+      <div><h2 style="margin:0 0 8px">选中 ${r.selected} 条（列出 ${d.selected.length} 条）</h2><div style="display:grid;gap:8px">${d.selected.map(([m, q, c]) => `<div class="entry"><div class="meta">${esc(m)}</div><div class="q">${esc(q)}</div><div class="c">连接：${esc(c)}</div></div>`).join('')}</div></div>
+      <div><h2 style="margin:0 0 8px">你的表态</h2><div style="display:grid;gap:6px">${state.verdicts.filter(v => v.recall === r.id).map(v => `<div class="row" style="gap:8px"><span class="tag">${v.slot}</span><span style="${v.verdict === 'no' ? 'text-decoration:line-through;color:var(--text-3)' : ''}">${esc(v.statement)}</span>${v.verdict === 'yes' ? '<span class="tag ok">对</span>' : '<span class="tag err">不对</span>'}${v.edited ? `<span style="color:var(--accent);font-size:12.5px">→ ${esc(v.edited)}</span>` : ''}</div>`).join('') || '<span class="faint">这次没有表态</span>'}</div></div>
+      ${LIVE.on ? `<div class="faint mono" style="font-size:12px">runId ${esc(r.id)}</div>` : '<div class="row"><button class="btn" data-action="toast" data-msg="（mock）已在 Finder 中显示上下文文件">打开上下文文件</button></div>'}`
+      : r.status === 'error' ? `<div class="notice warn"><span>${esc(r.err)}</span></div><div class="faint">在原来的应用里重新提问即可重试</div>`
+      : r.status === 'skipped' ? `<div class="faint">门卫判断这句不需要意图分析：${esc(r.why)}</div>`
+      : `<div class="faint">${LIVE.on ? '这次召回没有走完，没有详情' : '（原型里只有第一条召回带完整详情）'}</div>`}
+    </div>`;
+}
+
+/** 未激活（hosted-only 客户端）：整个主区换成三步向导页，概览统计不露出；
+ *  设置页放行（那里也能激活，两条路等价） */
+function renderWizard() {
+  return `
+  <div class="head"><div><h1>欢迎使用意图系统</h1><p class="sub">三步开始：激活 → 导入历史 → 缓存预热。之后在 Claude Code 里提问就会自动召回相关历史。</p></div></div>
+  <div class="card pad" style="max-width:640px;margin:0 auto">
+    <div style="display:grid;gap:14px">
+      <div>
+        <div class="row" style="gap:8px"><span class="src-name">① 激活</span><span class="tag acc">当前步骤</span></div>
+        <p class="sub" style="margin:6px 0">输入我们发给你的邀请码，激活后这台电脑就能用（免费）。</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <input id="cfg-invite-ov" type="text" placeholder="IL-XXXX-XXXX" style="width:180px" />
+          <button class="btn primary" data-action="hosted-activate">激活</button>
+          <a class="btn ghost" href="#settings">在设置页操作也可以</a>
+        </div>
+      </div>
+      <div style="opacity:.4">
+        <div class="row" style="gap:8px"><span class="src-name">② 选择来源并导入</span></div>
+        <p class="sub" style="margin:6px 0">激活后选择要导入的应用（Claude Code / Codex），可先按项目排除。导入只存在这台电脑。</p>
+      </div>
+      <div style="opacity:.4">
+        <div class="row" style="gap:8px"><span class="src-name">③ 自动缓存预热</span></div>
+        <p class="sub" style="margin:6px 0">导入后自动开始，完成后在 Claude Code 里提问即可。</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  renderNav();
+  if (state.config && state.config.hostedOnly && !(state.config.hosted && state.config.hosted.granted) && state.page !== 'settings') {
+    $('#main').innerHTML = renderWizard();
+    renderDrawer();
+    return;
+  }
+  const pages = { overview: pageOverview, sources: pageSources, settings: pageSettings };
+  $('#main').innerHTML = (pages[state.page] || pageOverview)();
+  const s = $('#recall-search');
+  if (s) { s.oninput = () => { state.recallSearch = s.value; const pos = s.selectionStart; render(); const t = $('#recall-search'); t.focus(); t.setSelectionRange(pos, pos); }; }
+  renderDrawer();
+}
+
+
+/* ================= 真实接口（/local/*） ================= */
+const LIVE = { on: false, timer: null, error: null };
+const META = {
+  claude: { name: 'Claude Code', ico: 'C', color: '#c96442' },
+  codex: { name: 'Codex', ico: 'X', color: '#3d3d3d' },
+};
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+function mapLive(r) {
+  const running = j => j && (j.phase === 'scan' || j.phase === 'import');
+  const list = r.sources.map(x => {
+    const job = x.job, run = running(job);
+    return {
+      id: x.id, ...META[x.id], root: x.root, enabled: x.enabled, consent: x.consent,
+      sessions: x.sessions, imported: x.rowsStored, total: x.rowsFound, active: x.rowsActive,
+      lastSync: x.lastSyncAt, syncing: null, error: job && job.phase === 'error' ? `上次导入失败：${job.error}` : null,
+      importing: run ? (job.startedAt || 1) : null,
+      progress: run ? (job.phase === 'scan' ? (job.filesTotal ? job.filesDone / job.filesTotal : 0) * 0.3 : 0.3 + 0.7 * (job.rowsTotal ? job.rowsSent / job.rowsTotal : 1)) : null,
+      progressText: run ? (job.phase === 'scan' ? `扫描文件 ${n(job.filesDone)} / ${n(job.filesTotal)}` : `入库 ${n(job.rowsSent)} / ${n(job.rowsTotal)} 条`) : null,
+      skipped: x.skippedSessions,
+      projects: x.projects.map(p => ({ path: p.path.replace(/^\/Users\/[^/]+/, '~'), rawPath: p.path, count: p.found, stored: p.stored, sessions: p.sessions, last: p.lastTs, excluded: p.excluded })),
+      _job: job,
+    };
+  });
+  list.push({ id: 'orbita', name: 'Orbita', ico: 'O', color: '#1d4ed8', root: '经 /import + /ingest 推送', enabled: true, consent: 'yes',
+    sessions: 0, imported: r.orbita.rowsStored, total: r.orbita.rowsStored, active: r.orbita.rowsStored, lastSync: null, push: true,
+    importing: null, syncing: null, error: null, projects: [] });
+  return list.filter(s => s.id !== 'orbita' || s.imported > 0);
+}
+async function refreshLive(announce) {
+  try {
+    const r = await api('/local/sources');
+    const before = new Map(state.sources.map(s => [s.id, s._job && s._job.phase]));
+    state.sources = mapLive(r);
+    for (const s of state.sources) {
+      const was = before.get(s.id), j = s._job;
+      if (announce !== false && (was === 'scan' || was === 'import') && j && j.phase === 'done') toast(`${s.name}：${j.mode === 'full' ? '导入' : '同步'}完成 · 新入库 ${n(j.imported)} · 重复 ${n(j.duplicates)}${j.updated ? ` · 更新 ${n(j.updated)}` : ''}`);
+      if ((was === 'scan' || was === 'import') && j && j.phase === 'error') toast(`${s.name} 导入失败：${j.error}`);
+    }
+    LIVE.on = true; LIVE.error = null;
+    const [rc, vd, hl, ap] = await Promise.all([api('/local/recalls?limit=200'), api('/local/verdicts'), api('/health').catch(() => null), api('/local/apps')]);
+    state.apps = ap.apps;
+    const pwBefore = state.prewarm && state.prewarm.phase;
+    state.prewarm = (await api('/local/prewarm')).prewarm;
+    if (pwBefore && ['queued', 'running', 'paused'].includes(pwBefore) && state.prewarm.phase === 'done') toast('缓存预热完成，召回会快很多');
+    if (pwBefore && !['queued', 'running', 'paused'].includes(pwBefore) && pwRunning(state.prewarm)) toast('已开始缓存预热（可在「来源」看进度）');
+    state.recalls = mapRecalls(rc.recalls);
+    state.verdicts = vd.verdicts.map(v => ({
+      id: `${v.qaId}#${v.slot}`, qaId: v.qaId, slotNum: v.slot, at: v.ts, slot: v.slotName, statement: v.statement,
+      verdict: v.verdict, edited: v.edited, from: v.from, recall: state.recalls.some(x => x.id === v.runId) ? v.runId : null,
+    }));
+    if (hl) state.swarmModel = hl.swarm && hl.swarm.model;
+    if (!state.config) state.config = (await api('/local/config')).config; // 任何页都要（概览引导卡靠 hosted.granted 判激活态）
+  } catch (e) { LIVE.error = e.message; }
+  const busy = state.sources.some(s => s.importing) || pwRunning(state.prewarm);
+  clearTimeout(LIVE.timer);
+  LIVE.timer = setTimeout(refreshLive, busy ? 800 : 15000);
+  // 设置页不自动重绘：会冲掉正在填的表单
+  if (state.page !== 'settings' && !(document.activeElement && document.activeElement.tagName === 'INPUT')) render();
+}
+const fmtMs = ms => (ms === undefined ? undefined : dur(ms));
+function mapRecalls(rows) {
+  return rows.map(r => {
+    const app = r.sessionId.startsWith('claude-') ? 'Claude' : r.sessionId.startsWith('codex-') ? 'Codex' : 'Orbita';
+    if (r.status === 'done') {
+      DETAIL[r.runId] = {
+        scene: r.scene || '', want: r.want || '', summary: r.summary || '',
+        stages: [['门卫', r.stages.gate], ['理解问题', r.stages.s1], ['逐条面试', r.stages.s3], ['守门员摘句', r.stages.s4]]
+          .filter(([, ms]) => ms !== undefined).map(([l, ms]) => [l, fmtMs(ms)]),
+        selected: r.selected.map(s => [`${s.when} · ${s.title} · ${(s.slots || []).join(' · ')}${typeof s.score === 'number' ? ' ' + s.score.toFixed(1) : ''}`, s.human || '', s.connection || '']),
+      };
+    }
+    return { id: r.runId, at: r.ts, app, q: r.q, status: r.status, read: r.qaTotal ?? 0, selected: r.selected.length, asked: r.ask.length,
+      ms: r.totalMs, why: r.gateWhy || '', stage: (r.error && r.error.stage) || '', err: (r.error && r.error.message) || '', forced: r.forced };
+  });
+}
+async function loadSessions(key) {
+  const [id, ...rest] = key.split('|');
+  const src_ = src(id), p = src_ && src_.projects.find(x => x.path === rest.join('|'));
+  if (!p) return;
+  const r = await api(`/local/sessions?source=${id}&project=${encodeURIComponent(p.rawPath)}`);
+  state.sessionsOf[key] = r.sessions.map(x => ({ sessionId: x.sessionId, title: x.title, count: x.found, stored: x.stored, last: x.lastTs, excluded: x.excluded }));
+  render();
+}
+/** 真实模式下的动作；返回 true = 已处理 */
+async function liveAction(a, t) {
+  const id = t.dataset.id;
+  const s = id ? src(id) : null;
+  try {
+    switch (a) {
+      case 'import': await api('/local/import', { source: id, mode: 'full' }); toast('开始导入，进度在「来源」页与这里显示'); break;
+      case 'sync': await api('/local/import', { source: id, mode: 'sync' }); toast(`${s.name}：开始增量同步`); break;
+      case 'sync-all': for (const x of state.sources.filter(x => !x.push && x.consent === 'yes')) await api('/local/import', { source: x.id, mode: 'sync' }); toast('开始增量同步'); break;
+      case 'decline': await api('/local/settings', { source: id, consent: 'no' }); toast(`不导入 ${s.name}，之后可以在「来源」里改主意`); break;
+      case 'toggle-src': await api('/local/settings', { source: id, enabled: !s.enabled }); toast(`${s.name} ${!s.enabled ? '参与召回' : '已暂停，不参与召回'}`); break;
+      case 'clear': {
+        if (state.armed !== `clear:${id}`) { state.armed = `clear:${id}`; render(); return true; }
+        state.armed = null;
+        const r = await api('/local/clear', { source: id });
+        toast(`已清空 ${s.name}：${n(r.cleared)} 条不再参与召回`); break;
+      }
+      case 'exclude': {
+        const p = src(t.dataset.src).projects.find(x => x.path === t.dataset.path);
+        await api('/local/exclude', { source: t.dataset.src, project: p.rawPath, excluded: !p.excluded });
+        toast(!p.excluded ? `已排除 ${p.path}` : `已恢复 ${p.path}`); break;
+      }
+      case 'exclude-session': {
+        const x = state.sessionsOf[t.dataset.key][+t.dataset.i];
+        await api('/local/exclude', { source: t.dataset.key.split('|')[0], sessionId: x.sessionId, excluded: !x.excluded });
+        x.excluded = !x.excluded;
+        toast(x.excluded ? `已排除会话「${x.title}」` : `已恢复会话「${x.title}」`); break;
+      }
+      case 'expand': {
+        const key = t.dataset.key;
+        state.expanded = state.expanded === key ? null : key;
+        render();
+        if (state.expanded === key) await loadSessions(key);
+        return true;
+      }
+      case 'retry': await api('/local/import', { source: id, mode: 'sync' }); break;
+      case 'cancel-import': toast('导入在服务端进行，暂不支持中途取消'); return true;
+      case 'app-switch': {
+        const app = t.dataset.app, on = !state.apps[app];
+        state.apps = (await api('/local/apps', { [app]: on })).apps;
+        toast(app === 'claude'
+          ? (on ? 'Claude Code：之后的新对话一开局就打开意图系统（已打开的对话不变）' : 'Claude Code：之后的新对话默认不做意图分析')
+          : (on ? 'Codex：已记下，接入后生效' : 'Codex：已关'));
+        break;
+      }
+      case 'endpoint-mode': state.endpointMode = t.dataset.v; render(); return true;
+      case 'next-import-all': {
+        const un = state.sources.filter(s => s.consent === 'unasked' && s.total > 0);
+        for (const s of un) {
+          await api('/local/settings', { source: s.id, consent: 'yes' });
+          await api('/local/import', { source: s.id, mode: 'full' });
+        }
+        state.page = 'overview'; // 引导第 ③ 步（预热进度）在概览
+        toast(`开始导入 ${un.map(s => s.name).join('、')}；导入完会自动开始预热`);
+        break;
+      }
+      case 'engine-mode': {
+        const v = t.dataset.v; // 'hosted-27b' | 'deepseek-own'（页面脚本是纯 JS，不能写 TS 断言）
+        if (v === 'deepseek-own' && !(state.config?.userKey?.set)) { state.wantOwnKey = true; render(); const k = document.querySelector('#ds-key'); if (k) k.focus(); return true; }
+        if (v === 'hosted-27b') state.wantOwnKey = false;
+        state.config = (await api('/local/config', { mode: 'hosted', engine: v })).config;
+        toast(v === 'deepseek-own' ? '已切到 DeepSeek 自备 key（不需要预热）' : '已切回 27B 免费档');
+        break;
+      }
+      case 'user-key-save': {
+        const inp = document.querySelector('#ds-key');
+        const key = inp ? inp.value.trim() : '';
+        if (!key) { toast('请粘贴 DeepSeek 的 API key（sk- 开头）'); return true; }
+        t.disabled = true;
+        try {
+          const r = await api('/local/user-key', { key });
+          state.config = (await api('/local/config', { mode: 'hosted', engine: 'deepseek-own' })).config;
+          toast(`key 已存好（末 4 位 ${r.last4 ?? ''}），已切到 DeepSeek 自备档`);
+        } catch (e) { toast(`没存上：${e.message}`); }
+        t.disabled = false;
+        break;
+      }
+      case 'user-key-delete': {
+        await api('/local/user-key', { action: 'delete' });
+        state.config = (await api('/local/config', { mode: 'hosted', engine: 'hosted-27b' })).config;
+        toast('已删除自备 key，回到 27B 免费档');
+        break;
+      }
+      case 'prewarm-start': state.prewarm = (await api('/local/prewarm', { action: 'start' })).prewarm; toast('已开始缓存预热'); break;
+      case 'prewarm-stop': state.prewarm = (await api('/local/prewarm', { action: 'stop' })).prewarm; toast('预热会在手头这几条做完后停下'); break;
+      case 'hosted-activate': {
+        const inp = document.querySelector('#cfg-invite') || document.querySelector('#cfg-invite-ov');
+        const code = inp ? inp.value.trim() : '';
+        if (!code) { toast('请输入邀请码'); return true; }
+        t.disabled = true;
+        try {
+          state.config = (await api('/local/hosted/activate', { code })).config;
+          state.endpointMode = null;
+          state.page = 'overview'; // 引导卡在概览：激活后自动前进到第 ② 步（导入并开始预热）
+          await refreshLive(false); // 拿来源条数与预热速率，估「预计约 N 分钟」
+          toast(`已激活${state.config.hosted.user ? `：${state.config.hosted.user}` : ''}；下一步：导入历史并开始预热`);
+        } catch (e) { toast(`激活没成功：${e.message}`); }
+        t.disabled = false;
+        render(); return true;
+      }
+      case 'hosted-revoke': {
+        if (state.armed !== 'hosted-revoke') { state.armed = 'hosted-revoke'; render(); return true; }
+        state.armed = null;
+        state.config = (await api('/local/hosted/revoke', {})).config;
+        state.endpointMode = null;
+        toast(c.hostedOnly ? '已解除授权；重新输入邀请码可再次使用' : '已解除授权，切回「自己配置」'); render(); return true;
+      }
+      case 'save': {
+        const val = sel => { const e = document.querySelector(sel); return e ? e.value : ''; };
+        const mode = state.endpointMode || state.config.mode;
+        const body = { mode };
+        if (mode === 'own') {
+          for (const k of ['main', 'swarm']) body[k] = { baseUrl: val(`#cfg-${k}-url`), model: val(`#cfg-${k}-model`), apiKey: val(`#cfg-${k}-key`) };
+          const b = Number(val('#cfg-budget')), c = Number(val('#cfg-conc'));
+          if (b > 0) body.swarm.recallBudgetMs = b * 60000;
+          if (c > 0) body.swarm.recallConcurrency = c;
+        }
+        state.config = (await api('/local/config', body)).config;
+        state.endpointMode = null;
+        toast(mode === 'hosted' ? '已切到我们的服务器；新的召回立即生效' : '已保存；新的召回立即用新配置'); render(); return true;
+      }
+      case 'test-endpoint': {
+        const h = await api('/health');
+        toast(h.ok ? `连接正常 · 蜂群 ${h.swarm.model} · 主模型 ${h.main.model} · 可召回 ${n(h.qaVisible)} 条` : `配置不完整：${h.error}`);
+        return true;
+      }
+      case 'wipe': {
+        if (state.armed !== 'wipe') { state.armed = 'wipe'; render(); return true; }
+        state.armed = null;
+        await api('/reset', {});
+        for (const x of ['claude', 'codex']) await api('/local/clear', { source: x });
+        toast('已清空全部数据'); break;
+      }
+      default: return false;
+    }
+  } catch (e) { toast(`操作失败：${e.message}`); }
+  await refreshLive(false);
+  return true;
+}
+const LIVE_ACTIONS = new Set(['next-import-all', 'engine-mode', 'user-key-save', 'user-key-delete', 'prewarm-start', 'prewarm-stop', 'hosted-activate', 'hosted-revoke', 'import', 'sync', 'sync-all', 'decline', 'toggle-src', 'clear', 'exclude', 'exclude-session', 'expand', 'retry', 'cancel-import', 'save', 'test-endpoint', 'wipe', 'app-switch', 'endpoint-mode']);
+
+/* ================= 交互 ================= */
+const IMPORT_MS = 8000, SYNC_MS = 1200;
+function tick() {
+  if (LIVE.on) return;
+  let changed = false;
+  for (const s of state.sources) {
+    if (s.importing) {
+      const f = Math.min(1, (Date.now() - s.importing) / IMPORT_MS);
+      s.imported = Math.round(s.total * f); changed = true;
+      if (f >= 1) { s.importing = null; s.lastSync = Date.now(); s.enabled = true; toast(`${s.name} 导入完成：${n(s.total)} 条`); }
+    }
+    if (s.syncing && Date.now() - s.syncing >= SYNC_MS) {
+      const add = s.id === 'codex' ? 3 : 1;
+      s.syncing = null; s.imported += add; s.total += add; s.lastSync = Date.now(); changed = true;
+      toast(`${s.name} 同步完成：新增 ${add} 条`);
+    }
+  }
+  if (changed) render();
+}
+setInterval(tick, 200);
+setInterval(() => { if (!document.activeElement || document.activeElement.tagName !== 'INPUT') render(); }, 30_000);
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const a = t.dataset.action, id = t.dataset.id;
+  if (t.tagName === 'A') e.preventDefault();
+  if (LIVE.on && LIVE_ACTIONS.has(a) && (!id || !src(id) || !src(id).push)) {
+    if (!['clear', 'revoke', 'wipe', 'hosted-revoke'].includes(a)) state.armed = null;
+    if (a === 'exclude') e.stopPropagation();
+    void liveAction(a, t);
+    return;
+  }
+  if (a !== 'clear' && a !== 'revoke' && a !== 'wipe' && a !== 'hosted-revoke') state.armed = null;
+  if (LIVE.on && a === 'goto') { location.hash = t.dataset.page; return; }
+  const s = id ? src(id) : null;
+  switch (a) {
+    case 'goto': location.hash = t.dataset.page; return;
+    case 'import': Object.assign(s, { consent: 'yes', imported: 0, importing: Date.now(), error: null }); break;
+    case 'decline': s.consent = 'no'; toast(`不导入 ${s.name}，之后可以在「来源」里改主意`); break;
+    case 'cancel-import': Object.assign(s, { importing: null, imported: 0 }); toast('已取消导入'); break;
+    case 'sync': s.syncing = Date.now(); break;
+    case 'sync-all': state.sources.filter(x => x.imported && !x.push && !x.importing).forEach(x => (x.syncing = Date.now())); break;
+    case 'retry': s.error = null; s.lastSync = Date.now(); toast(`${s.name}：重试成功（mock）`); break;
+    case 'toggle-src': s.enabled = !s.enabled; toast(`${s.name} ${s.enabled ? '参与召回' : '已暂停，不参与召回'}`); break;
+    case 'clear':
+      if (state.armed !== `clear:${id}`) { state.armed = `clear:${id}`; break; }
+      state.armed = null; Object.assign(s, { imported: 0, enabled: false, lastSync: null }); toast(`已清空 ${s.name} 在 intent-lab 里的数据`); break;
+    case 'disarm': state.armed = null; break;
+    case 'expand': state.expanded = state.expanded === t.dataset.key ? null : t.dataset.key; break;
+    case 'exclude': {
+      e.stopPropagation();
+      const p = src(t.dataset.src).projects.find(x => x.path === t.dataset.path);
+      if (!p.excluded) { p.origCount = p.count; p.count = 0; } else { p.count = p.origCount ?? p.count; }
+      p.excluded = !p.excluded; toast(p.excluded ? `已排除 ${p.path}` : `已恢复 ${p.path}`); break;
+    }
+    case 'exclude-session': {
+      const x = state.sessionsOf[t.dataset.key][+t.dataset.i]; x.excluded = !x.excluded;
+      toast(x.excluded ? `已排除会话「${x.title}」` : `已恢复会话「${x.title}」`); break;
+    }
+    case 'open-recall': state.drawer = id; break;
+    case 'close-drawer': state.drawer = null; break;
+    case 'recall-filter': state.recallFilter = t.dataset.v; break;
+    case 'verdict-filter': state.verdictFilter = t.dataset.v; break;
+    case 'revoke':
+      if (state.armed !== `revoke:${id}`) { state.armed = `revoke:${id}`; break; }
+      state.armed = null; state.verdicts = state.verdicts.filter(v => v.id !== id); toast('已撤销，这条连接恢复成未表态'); break;
+    case 'app-mode': state.settings.appMode[t.dataset.app] = t.dataset.v; break;
+    case 'app-switch': state.apps[t.dataset.app] = !state.apps[t.dataset.app]; break;
+    case 'save': toast('已保存配置'); return;
+    case 'test-endpoint': toast('蜂群端点连通 · qwen38-27b-nvfp4 · 820ms（mock）'); return;
+    case 'rotate': toast('已重新生成令牌；Claude 插件下次请求会自动读取新令牌（mock）'); return;
+    case 'wipe':
+      if (state.armed !== 'wipe') { state.armed = 'wipe'; break; }
+      state.armed = null; state.sources.forEach(x => Object.assign(x, { imported: 0, enabled: false, lastSync: null })); state.recalls = []; state.verdicts = [];
+      toast('已清空全部数据（mock）'); break;
+    case 'toast': toast(t.dataset.msg); return;
+  }
+  render();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.drawer) { state.drawer = null; render(); } });
+const PAGES = ['overview', 'sources', 'settings'];
+window.addEventListener('hashchange', async () => {
+  state.page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview'; state.armed = null; render(); window.scrollTo(0, 0);
+  if (LIVE.on && state.page === 'settings') { try { state.config = (await api('/local/config')).config; render(); } catch (e) { toast(`读配置失败：${e.message}`); } }
+});
+render();
+if (location.protocol.startsWith('http')) {
+  refreshLive().then(() => {
+    // 直接打开 #settings 时 refreshLive 不重画设置页（怕打断输入）——首次连上必须重画一次，否则一直停在示例数据版设置页
+    if (LIVE.on && state.page === 'settings') render();
+    const host = $('#foot-host'); if (host) host.textContent = location.host;
+    const mode = $('#foot-mode'); if (mode) mode.textContent = LIVE.on ? '' : `没连上服务（${LIVE.error}）`;
+  });
+}
+</script>
+</body>
+</html>

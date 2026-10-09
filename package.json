@@ -1,0 +1,16 @@
+{
+  "name": "intent-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "意图系统客户端：把你的历史对话变成「意图召回」——本地服务读 Claude Code / Codex 的历史，提问时召回相关原文（模型与编排由官方服务器提供，需邀请码）",
+  "scripts": {
+    "serve": "bun run src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.6",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+data/
+*.log
+.DS_Store
+
+# Claude Code 引擎在插件目录里生成的类型（加载时自动写）
+adapters/claude-code/*/.claude-plugin/types/
+adapters/claude-code/*/tsconfig.json

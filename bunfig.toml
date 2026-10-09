@@ -1,0 +1,3 @@
+[test]
+# 插件测试（adapters/**/*.test.tsx）用 `claude plugin test` 跑，bun test 只扫 test/
+root = "test"
