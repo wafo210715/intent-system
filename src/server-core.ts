@@ -1139,6 +1139,7 @@ async function handleInvalidate(raw: unknown): Promise<Response> {
 // ---------- 本机来源（2026-10-10）：Claude Code / Codex 的会话文件直接入库 + 管理页 /ui ----------
 
 /** 本机接口的防护：只认本机 Host；写操作若带 Origin 必须是本页（挡其他网页借浏览器调本机服务）。
+ *  覆盖 /ui、/local/*，以及核心写接口 /recall /feedback /import /reset /ingest /invalidate。
  *  插件 / curl 不带 Origin，照常放行。之后加本机令牌时也加在这里。 */
 function localGuard(req: Request, url: URL): Response | null {
   const host = (req.headers.get("host") ?? "").replace(/:\d+$/, "");
@@ -1682,13 +1683,19 @@ const UI_FILE = join(import.meta.dir, "..", "ui", "index.html");
 
 // ---------- 路由 ----------
 
+const CORE_MUTATING = new Set(["/recall", "/feedback", "/import", "/reset", "/ingest", "/invalidate"]);
+
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   if (path === "/health" && req.method === "GET") return handleHealth();
-  if (path === "/ui" || path === "/local" || path.startsWith("/local/")) {
+  const isUiOrLocal = path === "/ui" || path === "/local" || path.startsWith("/local/");
+  const isCoreMutating = req.method === "POST" && CORE_MUTATING.has(path);
+  if (isUiOrLocal || isCoreMutating) {
     const denied = localGuard(req, url);
     if (denied) return denied;
+  }
+  if (isUiOrLocal) {
     if (path === "/ui" && req.method === "GET") {
       return existsSync(UI_FILE) ? new Response(Bun.file(UI_FILE), { headers: { "content-type": "text/html; charset=utf-8" } }) : jsonError(404, "ui/index.html 不存在");
     }
