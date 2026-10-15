@@ -1,15 +1,17 @@
 /**
- * 本机来源（2026-10-10）：intent-lab 直接读这台电脑上 Claude Code 与 Codex 的会话文件，
+ * 本机来源（2026-10-10）：intent-lab 直接读这台电脑上 Claude Code / Codex / Proma 的会话文件，
  * 切成与 /import 同一形状的行（sessionId / turnId / title / q / a / ts），走 /import 的
- * 同一条入库路径（去重、内容更新、作废、预热全复用）。给不用 Orbita 的人（Claude Code /
- * Codex 用户）一条不经迁移的入库路。
+ * 同一条入库路径（去重、内容更新、作废、预热全复用）。给不用 Orbita 的人一条不经迁移的入库路。
  *
  * 切行口径与 Orbita 的 qaRowsFromTranscript 一致（契约原文）：一条「用户亲口说的话」开一轮，
  * q = 用户原话（剥系统注入），a = 这一轮助手最后一段非空文字（没有 = 空串，也送），
  * ts = 那条用户消息原来的时间。清洗规则移植自 Orbita 的 main/session/claude-code.ts 与
  * codex.ts；Codex 部分按本机真实 rollout 校准过（Orbita 那份写明「本机没有真实样本」）。
+ * Proma 部分（2026-10-13）移植自 intent-lab 私有树的 proma-reader.ts / qa-builder.ts，
+ * 按本机真实 agent-sessions 校准（界面日志 = 用户原文；sdk-config/sessions 的 pi 文件带
+ * prompt builder 噪声，不读）。
  *
- * sessionId 带来源前缀（`claude-<文件名>` / `codex-<会话 id>`）——qaId 因此是
+ * sessionId 带来源前缀（`claude-<文件名>` / `codex-<会话 id>` / `proma-<会话 id>`）——qaId 因此是
  * `orbita:claude-…:<turnId>`，与 Orbita 送来的行互不相撞，按前缀就能分来源。
  *
  * 排除（项目 / 会话 / 整个来源暂停）不删数据，只在可见集里藏（history.visibleQAs 调
@@ -20,7 +22,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { dataDir } from "./store.ts";
 
-export type LocalSourceId = "claude" | "codex";
+export type LocalSourceId = "claude" | "codex" | "proma";
 /**
  * 不承载意图的轮次：切轮时照常当分隔，但不生成 QA。
  * - 操作指令（/compact 等）
@@ -32,7 +34,7 @@ export function isControlCommand(qText: string): boolean {
   return /^\/(compact|clear|model|cost|help|resume|stop)\b/.test(t) || t.startsWith("This session is being continued");
 }
 
-export const LOCAL_SOURCES: readonly LocalSourceId[] = ["claude", "codex"];
+export const LOCAL_SOURCES: readonly LocalSourceId[] = ["claude", "codex", "proma"];
 
 /** 与 /import 的一行同形 */
 export interface LocalRow {
@@ -331,10 +333,235 @@ export function parseCodexRollout(raw: string, file: string, titles?: Map<string
   };
 }
 
+// ================================ Proma ================================
+
+/**
+ * Proma 的会话数据（只读）：`~/.proma/agent-sessions/<id>.jsonl` 是界面日志（用户原文），
+ * `~/.proma/agent-sessions.json` 是索引（标题 / 工作区 / 委派与自动化标记）。
+ * `sdk-config/sessions/*.jsonl`（pi 文件）是 prompt builder 拼好的整段，带注入噪声，不读。
+ * 清洗规则移植自 intent-lab 私有树的 qa-builder.ts（2026-10-13，按本机真实文件校准）。
+ */
+
+/** agent-sessions.json 索引里用得到的字段（2026-10-13 本机核实） */
+interface PromaIndexEntry {
+  id: string;
+  title?: string;
+  workspaceId?: string;
+  parentSessionId?: string;
+  sourceDelegationId?: string;
+  delegationDepth?: number;
+  explorationParentSessionId?: string;
+  sourceAutomationId?: string;
+}
+
+/** 解析一个 Proma 会话文件时从索引带来的元数据 */
+export interface PromaSessionMeta {
+  title: string | null;
+  kind: SessionKind;
+  /** 工作区显示名（agent-workspaces.json 解析得到；按它做项目排除分组），拿不到为 null */
+  project: string | null;
+}
+
+/** 会话是谁开的：委派 / 探索子会话 → subagent；定时任务 → automation；其余 user（与 Codex 口径一致） */
+export function promaKindOf(entry: PromaIndexEntry | undefined): SessionKind {
+  if (!entry) return "user";
+  if (entry.sourceAutomationId) return "automation";
+  if (entry.parentSessionId || entry.sourceDelegationId || (entry.delegationDepth ?? 0) > 0 || entry.explorationParentSessionId) return "subagent";
+  return "user";
+}
+
+function readPromaIndex(root: string): Map<string, PromaIndexEntry> {
+  const map = new Map<string, PromaIndexEntry>();
+  const p = join(root, "agent-sessions.json");
+  if (!existsSync(p)) return map;
+  try {
+    const raw = JSON.parse(readFileSync(p, "utf8")) as { sessions?: PromaIndexEntry[] };
+    for (const s of raw.sessions ?? []) if (s && typeof s.id === "string") map.set(s.id, s);
+  } catch {
+    // 索引坏了按无索引：标题退回首问截断，全部当 user 会话
+  }
+  return map;
+}
+
+/** workspaceId → 显示名（agent-workspaces.json；没有 name 就用项目根路径） */
+function promaWorkspaceNames(root: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const p = join(root, "agent-workspaces.json");
+  if (!existsSync(p)) return map;
+  try {
+    const raw = JSON.parse(readFileSync(p, "utf8")) as { workspaces?: Array<{ id?: string; name?: string; projectRootPath?: string }> };
+    for (const w of raw.workspaces ?? []) if (w.id) map.set(w.id, w.name || w.projectRootPath || w.id);
+  } catch {
+    // 同上：坏了就退回 workspaceId 原文
+  }
+  return map;
+}
+
+/** 委派子会话的首条消息是机器写的委派书（索引字段缺失时的兑底识别，只拦整句开头） */
+const PROMA_DELEGATION_HEAD = "你是 Proma 协作子 Agent";
+
+/** `@file:%2FUsers%2F…` 这类引用标记解码成可读路径，其余原样保留（移植自 qa-builder） */
+export function decodePromaMentions(text: string): string {
+  return text.replace(/@([a-zA-Z]+):(\S+)/g, (whole, kind: string, val: string) => {
+    if (!val.includes("%")) return whole;
+    try {
+      return `@${kind}:${decodeURIComponent(val)}`;
+    } catch {
+      return whole;
+    }
+  });
+}
+
+/**
+ * 剥掉注入到用户消息里、但不是用户写的东西（桥接渠道的前言与元数据）。
+ * 保留 `<quoted_message>` / `<quoted_context>` / `<attached_files>`：那是用户自己选的内容，属于他的表达。
+ */
+export function cleanPromaQuestion(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(bridge_context|interactive_card)>[\s\S]*?<\/\1>/g, "")
+    .replace(/<\/?user_message>/g, "")
+    .trim();
+}
+
+/** AskUserQuestion 的问题渲染成一段可读文本（移植自 qa-builder） */
+function renderPromaAskQuestions(input: unknown): string {
+  const qs = (input as { questions?: Array<{ header?: string; question?: string; options?: Array<{ label?: string }> }> } | null)?.questions;
+  if (!Array.isArray(qs)) return "";
+  return qs
+    .map((q) => {
+      const opts = (q.options ?? []).map((o) => o.label ?? "").filter(Boolean).join(" / ");
+      return `${q.header ? `[${q.header}] ` : ""}${q.question ?? ""}${opts ? `（选项：${opts}）` : ""}`;
+    })
+    .join("\n");
+}
+
+/** AskUserQuestion 的回答：优先解析 {"answers":{问题:回答}}，失败则用原文 */
+function renderPromaAskAnswers(content: unknown): string {
+  const raw = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((b) => (isRecord(b) && typeof b["text"] === "string" ? (b["text"] as string) : "")).join("\n")
+      : "";
+  try {
+    const parsed = JSON.parse(raw) as { answers?: Record<string, string> };
+    if (parsed.answers && typeof parsed.answers === "object") {
+      return Object.entries(parsed.answers).map(([q, a]) => `${q} → ${a}`).join("\n");
+    }
+  } catch {
+    // 不是 JSON，用原文
+  }
+  return raw;
+}
+
+/**
+ * 一份 Proma 会话 JSONL → 行。
+ * - 工具结果回传（tool_use_result / tool_result 块）不是用户的话：不开轮、不关轮（夹在轮中间回答不丢）；
+ * - 回答 = 这一轮助手最后一段非空文字（按 tool_use 切段，过程性旁白不进）；
+ * - 轮内每次 AskUserQuestion 派生一条行（q = 问题清单，a = 用户作答；turnId = 主轮 turnId + `:ask<n>`）；
+ * - 委派书开头的话、控制指令、剥完为空的都不开轮；
+ * - turnId 用用户消息的 uuid（稳定，重扫不变）；没有 uuid 退回行号。
+ * fork 会话（forkSourceDir）复制的轮次不去重——同文合并交给打分后的 dedupe（dupCount）。
+ */
+export function parsePromaSession(raw: string, file: string, meta?: PromaSessionMeta): ParsedSession {
+  const id = basename(file, ".jsonl");
+  const sessionId = `proma-${id}`;
+  interface PromaOpenTurn { turnId: string; q: string; ts: number; segments: string[][] }
+  const rows: LocalRow[] = [];
+  let open: PromaOpenTurn | null = null;
+  const asks = new Map<string, { input: unknown; turnId: string }>();
+  let askN = 0;
+  let line = 0;
+
+  const closeTurn = (): void => {
+    if (!open) return;
+    let a = "";
+    for (let i = open.segments.length - 1; i >= 0; i--) {
+      const joined = (open.segments[i] ?? []).join("\n").trim();
+      if (joined) { a = joined; break; }
+    }
+    rows.push({ sessionId, turnId: open.turnId, title: "", q: open.q, a, ts: open.ts });
+    open = null;
+  };
+
+  for (const text of raw.split("\n")) {
+    if (text.trim() === "") continue;
+    line += 1;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!isRecord(obj)) continue;
+    const type = obj["type"];
+    if (type !== "user" && type !== "assistant") continue;
+    const message = isRecord(obj["message"]) ? obj["message"] : null;
+    const blocks = blocksOf(message?.["content"]);
+    const ts = typeof obj["_createdAt"] === "number" ? (obj["_createdAt"] as number) : 0;
+
+    if (type === "user") {
+      const isToolResult = obj["tool_use_result"] !== undefined || blocks.some((b) => isRecord(b) && b["type"] === "tool_result");
+      if (isToolResult) {
+        for (const b of blocks) {
+          if (!isRecord(b) || b["type"] !== "tool_result") continue;
+          const useId = optStr(b["tool_use_id"]);
+          const ask = useId === null ? undefined : asks.get(useId);
+          if (!ask) continue;
+          asks.delete(useId as string);
+          const q = renderPromaAskQuestions(ask.input);
+          if (!q) continue;
+          askN += 1;
+          rows.push({ sessionId, turnId: `${ask.turnId}:ask${askN}`, title: "", q, a: renderPromaAskAnswers(b["content"]), ts: ts || open?.ts || 0 });
+        }
+        continue;
+      }
+      // 用户写的行：先关闭上一轮
+      closeTurn();
+      const q = cleanPromaQuestion(decodePromaMentions(textOf(blocks)));
+      if (!q || isControlCommand(q) || q.startsWith(PROMA_DELEGATION_HEAD)) continue;
+      open = { turnId: optStr(obj["uuid"]) ?? `L${line}`, q, ts, segments: [[]] };
+      continue;
+    }
+    // assistant：记录 AskUserQuestion 调用；文本进当前段，tool_use 切段
+    if (open === null) continue;
+    const cur: PromaOpenTurn = open;
+    for (const b of blocks) {
+      if (!isRecord(b)) continue;
+      if (b["type"] === "tool_use") {
+        if (b["name"] === "AskUserQuestion") {
+          const bid = optStr(b["id"]);
+          if (bid !== null) asks.set(bid, { input: b["input"], turnId: cur.turnId });
+        }
+        cur.segments.push([]);
+      } else if (b["type"] === "text" && typeof b["text"] === "string") {
+        cur.segments[cur.segments.length - 1]?.push(b["text"] as string);
+      }
+    }
+  }
+  closeTurn();
+
+  rows.sort((a, b) => a.ts - b.ts || a.turnId.localeCompare(b.turnId));
+  const title = meta?.title ?? (rows[0]?.q ? clipTitle(rows[0].q) : "(无标题)");
+  for (const r of rows) r.title = title;
+  return {
+    source: "proma",
+    sessionId,
+    file,
+    title,
+    project: meta?.project ?? null,
+    kind: meta?.kind ?? "user",
+    rows,
+    firstTs: rows[0]?.ts ?? 0,
+    lastTs: rows.reduce((m, r) => Math.max(m, r.ts), 0),
+  };
+}
+
 // ============================== 定位与扫描 ==============================
 
 export function sourceRoot(id: LocalSourceId): string {
   if (id === "claude") return process.env.INTENT_LAB_CLAUDE_HOME || process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  if (id === "proma") return process.env.INTENT_LAB_PROMA_HOME || join(homedir(), ".proma");
   return process.env.INTENT_LAB_CODEX_HOME || process.env.CODEX_HOME || join(homedir(), ".codex");
 }
 
@@ -350,6 +577,12 @@ export function listSessionFiles(id: LocalSourceId): string[] {
       const dir = join(projects, d.name);
       for (const f of readdirSync(dir)) if (f.endsWith(".jsonl")) out.push(join(dir, f));
     }
+    return out.sort();
+  }
+  if (id === "proma") {
+    const dir = join(root, "agent-sessions");
+    if (!existsSync(dir)) return out;
+    for (const f of readdirSync(dir)) if (f.endsWith(".jsonl")) out.push(join(dir, f));
     return out.sort();
   }
   const sessions = join(root, "sessions");
@@ -390,6 +623,9 @@ export const fileSig = (file: string): string => {
 export async function scanSource(id: LocalSourceId, onFile?: (done: number, total: number) => void): Promise<ParsedSession[]> {
   const files = listSessionFiles(id);
   const titles = id === "codex" ? codexTitles() : undefined;
+  // Proma：索引（标题 / 委派与自动化标记）与工作区名一次读入，按文件名逐会话查
+  const promaIndex = id === "proma" ? readPromaIndex(sourceRoot(id)) : undefined;
+  const promaWs = id === "proma" ? promaWorkspaceNames(sourceRoot(id)) : undefined;
   const out: ParsedSession[] = [];
   let i = 0;
   for (const file of files) {
@@ -405,7 +641,20 @@ export async function scanSource(id: LocalSourceId, onFile?: (done: number, tota
       out.push(hit.parsed);
     } else {
       const raw = await Bun.file(file).text();
-      const parsed = id === "claude" ? parseClaudeSession(raw, file) : parseCodexRollout(raw, file, titles);
+      let parsed: ParsedSession;
+      if (id === "claude") {
+        parsed = parseClaudeSession(raw, file);
+      } else if (id === "proma") {
+        const entry = promaIndex?.get(basename(file, ".jsonl"));
+        parsed = parsePromaSession(raw, file, {
+          title: entry?.title ?? null,
+          kind: promaKindOf(entry),
+          // 工作区已删（索引里还挂着 id、agent-workspaces.json 里没有）→ 归「无项目目录」，不显示裸 id
+          project: entry?.workspaceId ? (promaWs?.get(entry.workspaceId) ?? null) : null,
+        });
+      } else {
+        parsed = parseCodexRollout(raw, file, titles);
+      }
       parseCache.set(file, { sig, parsed });
       out.push(parsed);
       if (i % 20 === 0) await Bun.sleep(0); // 让出事件循环：扫描期间 /health、/recall 照常响应
@@ -430,6 +679,8 @@ export interface AppSwitches {
   claude: boolean;
   /** Codex 侧还没接入（MCP 待做）：先记下，接入后生效 */
   codex: boolean;
+  /** Proma 侧还没接入（原生集成进行中）：先记下，接入后生效 */
+  proma: boolean;
 }
 
 export interface LocalState {
@@ -444,12 +695,13 @@ export interface LocalState {
 }
 
 const emptyState = (): LocalState => ({
-  apps: { claude: false, codex: false },
+  apps: { claude: false, codex: false, proma: false },
   sources: {
     claude: { consent: "unasked", enabled: true, lastSyncAt: null },
     codex: { consent: "unasked", enabled: true, lastSyncAt: null },
+    proma: { consent: "unasked", enabled: true, lastSyncAt: null },
   },
-  excludedProjects: { claude: [], codex: [] },
+  excludedProjects: { claude: [], codex: [], proma: [] },
   excludedSessions: [],
   synced: {},
   sessions: {},
@@ -470,8 +722,16 @@ export function loadLocalState(dir = dataDir()): LocalState {
       const base = emptyState();
       state = {
         apps: { ...base.apps, ...raw.apps },
-        sources: { claude: { ...base.sources.claude, ...raw.sources?.claude }, codex: { ...base.sources.codex, ...raw.sources?.codex } },
-        excludedProjects: { claude: raw.excludedProjects?.claude ?? [], codex: raw.excludedProjects?.codex ?? [] },
+        sources: {
+          claude: { ...base.sources.claude, ...raw.sources?.claude },
+          codex: { ...base.sources.codex, ...raw.sources?.codex },
+          proma: { ...base.sources.proma, ...raw.sources?.proma },
+        },
+        excludedProjects: {
+          claude: raw.excludedProjects?.claude ?? [],
+          codex: raw.excludedProjects?.codex ?? [],
+          proma: raw.excludedProjects?.proma ?? [],
+        },
         excludedSessions: raw.excludedSessions ?? [],
         synced: raw.synced ?? {},
         sessions: raw.sessions ?? {},
@@ -503,6 +763,7 @@ export function updateLocalState(fn: (s: LocalState) => void, dir = dataDir()): 
 export function sourceOfSession(sessionId: string): LocalSourceId | null {
   if (sessionId.startsWith("claude-")) return "claude";
   if (sessionId.startsWith("codex-")) return "codex";
+  if (sessionId.startsWith("proma-")) return "proma";
   return null;
 }
 
@@ -510,7 +771,11 @@ export function sourceOfSession(sessionId: string): LocalSourceId | null {
 export function localHiddenSessions(dir = dataDir()): (sessionId: string) => boolean {
   const s = loadLocalState(dir);
   const excludedSessions = new Set(s.excludedSessions);
-  const excludedProjects = { claude: new Set(s.excludedProjects.claude), codex: new Set(s.excludedProjects.codex) };
+  const excludedProjects = {
+    claude: new Set(s.excludedProjects.claude),
+    codex: new Set(s.excludedProjects.codex),
+    proma: new Set(s.excludedProjects.proma),
+  };
   return (sessionId: string): boolean => {
     const src = sourceOfSession(sessionId);
     if (src === null) return false;

@@ -197,10 +197,12 @@ export function getLocalDriver(): LocalDriver | null {
   return localDriver;
 }
 
-/** 入库后要不要预热 / 补说明：hosted 走远端核心，本地编排走驱动（私有树）；都没有就什么都不做 */
+/** 入库后要不要预热 / 补说明：hosted 走远端核心（deepseek-own / 未授权不串——那个走 DeepSeek 官方缓存）；
+ *  本地编排永远交给驱动自己决定（B 方案补热、指代说明等各有自己的开关，2026-10-14 修正：不能按 prewarmTarget 一刀切） */
 function schedulePrewarm(rows: OrbitaQaRow[]): void {
   if (!rows.length) return;
   if (hostedRecallServer()) {
+    if (!prewarmWanted()) return;
     const sessionIds = [...new Set(rows.map((r) => r.sessionId))];
     chainPrewarm(() => remotePrewarmOnce(`增量同步 ${sessionIds.length} 个会话`, { sessionIds }), (err) =>
       console.log(`[prewarm] 远端增量预热失败（不影响入库）：${err instanceof Error ? err.message : String(err)}`));
@@ -1153,8 +1155,17 @@ function localGuard(req: Request, url: URL): Response | null {
 
 const isLocalSource = (v: unknown): v is LocalSourceId => typeof v === "string" && (LOCAL_SOURCES as readonly string[]).includes(v);
 
-/** 本机来源导入 / 同步结束：有新内容就开始（或接着）预热——在管理页里做完，不留到对话里 */
+/** 当前引擎要不要整任务预热（2026-10-14：导入与预热分开——自己 API 不走服务器缓存时预热无意义）：
+ *  hosted = 官方服务器且不是 deepseek-own（那个走 DeepSeek 官方缓存）；本地编排 = 驱动有 B 方案目标。 */
+function prewarmWanted(): boolean {
+  if (hostedRecallServer()) return hostedEngineOf() !== "deepseek-own" && !!loadHostedGrant();
+  return !!localDriver?.prewarmTarget();
+}
+
+/** 本机来源导入 / 同步结束：有新内容就开始（或接着）预热——在管理页里做完，不留到对话里。
+ *  引擎不需要预热（自己 API 不走缓存）时导入归导入，不串预热。 */
 function onLocalImportDone(job: { imported: number; updated: number; mode: string }): void {
+  if (!prewarmWanted()) return;
   if (job.imported + job.updated > 0 || job.mode === "full") startPrewarmJob(`本机来源${job.mode === "full" ? "导入" : "同步"}完成`);
 }
 
@@ -1224,14 +1235,54 @@ async function handleLocalSources(): Promise<Response> {
   }
   // Orbita 推送来的（/import /ingest 的非本机行）只给条数
   let orbita = 0;
-  for (const [sid, n] of stored) if (sourceOfSession(sid) === null) orbita += n;
-  return Response.json({ ok: true, sources, orbita: { rowsStored: orbita } });
+  const pushedGroups = new Map<string, { path: string; found: number; sessions: Set<string>; lastTs: number }>();
+  for (const r of dedupeRowsOf()) {
+    if (sourceOfSession(r.sessionId) !== null) continue;
+    orbita += 1;
+    const gpath = pushedGroupOf(r.sessionId);
+    const g = pushedGroups.get(gpath) ?? { path: gpath, found: 0, sessions: new Set<string>(), lastTs: 0 };
+    g.found += 1;
+    g.sessions.add(r.sessionId);
+    g.lastTs = Math.max(g.lastTs, r.tsAbs);
+    pushedGroups.set(gpath, g);
+  }
+  const groups = [...pushedGroups.values()]
+    .map((g) => ({ path: g.path, found: g.found, sessions: g.sessions.size, lastTs: g.lastTs }))
+    .sort((a, b) => b.lastTs - a.lastTs);
+  return Response.json({ ok: true, sources, orbita: { rowsStored: orbita, groups } });
+}
+
+/** 推送行（/import /ingest，sessionId 不带本机来源前缀）的分组：管理页「推送」卡的目录 */
+export function pushedGroupOf(sessionId: string): string {
+  if (sessionId.startsWith("obsidian-")) return "Obsidian 导入";
+  return "Orbita / MCP 推送";
+}
+
+/** 推送行按会话汇总（管理页展开「推送」卡的目录时用） */
+function pushedSessionViews(): Array<{ sessionId: string; title: string; rows: number; lastTs: number }> {
+  const by = new Map<string, { sessionId: string; title: string; rows: number; lastTs: number }>();
+  for (const r of dedupeRowsOf()) {
+    if (sourceOfSession(r.sessionId) !== null) continue;
+    const cur = by.get(r.sessionId) ?? { sessionId: r.sessionId, title: "", rows: 0, lastTs: 0 };
+    cur.rows += 1;
+    if (r.title) cur.title = r.title;
+    cur.lastTs = Math.max(cur.lastTs, r.tsAbs);
+    by.set(r.sessionId, cur);
+  }
+  return [...by.values()].sort((a, b) => b.lastTs - a.lastTs);
 }
 
 async function handleLocalSessions(url: URL): Promise<Response> {
   const id = url.searchParams.get("source");
   const project = url.searchParams.get("project");
-  if (!isLocalSource(id)) return jsonError(400, "source 必须是 claude 或 codex");
+  if (id === "orbita") {
+    // 推送卡（/import /ingest 来的行）：按会话列出，可按分组（目录）过滤
+    const sessions = pushedSessionViews()
+      .filter((s) => project === null || pushedGroupOf(s.sessionId) === project)
+      .map((s) => ({ sessionId: s.sessionId, title: s.title || "(无标题)", found: s.rows, files: 1, stored: s.rows, lastTs: s.lastTs, excluded: false }));
+    return Response.json({ ok: true, sessions });
+  }
+  if (!isLocalSource(id)) return jsonError(400, "source 必须是 claude、codex 或 proma");
   const st = loadLocalState();
   const excluded = new Set(st.excludedSessions);
   const stored = storedCountBySession();
@@ -1245,7 +1296,9 @@ async function handleLocalSessions(url: URL): Promise<Response> {
 async function handleLocalPost(path: string, raw: unknown): Promise<Response> {
   const b = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const id = b.source;
-  if (!isLocalSource(id)) return jsonError(400, "source 必须是 claude 或 codex");
+  // 推送 / 导入的行（/import /ingest）没有本机文件可排除或重扫，管理页也不给这张卡排除按钮
+  if (id === "orbita") return jsonError(400, "推送 / 导入的行不支持在这里排除或同步");
+  if (!isLocalSource(id)) return jsonError(400, "source 必须是 claude、codex 或 proma");
   if (path === "/local/import") {
     const mode = b.mode === "full" ? "full" : "sync";
     const job = startLocalImport(id, mode, importLocalBatch, onLocalImportDone);
@@ -1425,8 +1478,9 @@ async function handlePrewarmStatus(): Promise<Response> {
     const rate = await remotePrewarmRate(grant);
     return Response.json({ ok: true, prewarm: { available: true, ...prewarmJob, ratePerSec: rate, ...(coverage ? { coverage } : {}) } });
   }
-  // 本地编排：本地预热目标的状态与覆盖率（私有树的 recall-local 驱动）
-  if (localDriver) return localDriver.prewarmStatus();
+  // 本地编排：驱动有 B 方案目标才有预热；没有（自己 API 不走缓存）= 不适用，导入完成即可用
+  if (localDriver && localDriver.prewarmTarget()) return localDriver.prewarmStatus();
+  if (localDriver) return Response.json({ ok: true, prewarm: { available: false, notApplicable: true, reason: "当前用自己的模型端点（不走 B 方案缓存），不需要预热" } });
   return Response.json({ ok: true, prewarm: { available: false } });
 }
 
@@ -1464,7 +1518,7 @@ async function handleLocalVerdicts(): Promise<Response> {
       return {
         qaId: r.qaId, slot: r.slot, slotName: slotNameOf(r.slot), verdict: r.verdict, statement: r.statement,
         edited: r.edited ?? null, note: r.note ?? null, ts: r.ts, runId: r.runId,
-        from: qa ? `${src === "claude" ? "Claude" : src === "codex" ? "Codex" : "Orbita"} · ${titleOf(qa.sessionId) || "(无标题)"} · ${fmtShort(qa.tsAbs)}` : r.qaId,
+        from: qa ? `${src === "claude" ? "Claude" : src === "codex" ? "Codex" : src === "proma" ? "Proma" : "Orbita"} · ${titleOf(qa.sessionId) || "(无标题)"} · ${fmtShort(qa.tsAbs)}` : r.qaId,
       };
     });
   return Response.json({ ok: true, verdicts });
@@ -1769,6 +1823,7 @@ async function handle(req: Request): Promise<Response> {
         const st = updateLocalState((s) => {
           if (typeof b.claude === "boolean") s.apps.claude = b.claude;
           if (typeof b.codex === "boolean") s.apps.codex = b.codex;
+          if (typeof b.proma === "boolean") s.apps.proma = b.proma;
         });
         return Response.json({ ok: true, apps: st.apps });
       }
